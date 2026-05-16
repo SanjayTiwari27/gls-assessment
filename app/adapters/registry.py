@@ -18,6 +18,7 @@ from app.adapters.globalfreightpay_v1 import GlobalFreightPayV1Adapter
 from app.adapters.maersk_v1 import MaerskV1Adapter
 from app.adapters.marine_traffic_v1 import MarineTrafficV1Adapter
 from app.adapters.one_v1 import OneV1Adapter
+from app.logging import get_logger
 
 _DEFAULT_ADAPTERS: tuple[VendorAdapter, ...] = (
     MaerskV1Adapter(),
@@ -25,6 +26,7 @@ _DEFAULT_ADAPTERS: tuple[VendorAdapter, ...] = (
     GlobalFreightPayV1Adapter(),
     MarineTrafficV1Adapter(),
 )
+log = get_logger("adapters.registry")
 
 
 class AdapterRegistry:
@@ -38,7 +40,12 @@ class AdapterRegistry:
             try:
                 if adapter.matches(payload, headers):
                     return adapter
-            except Exception:
+            except Exception as exc:
+                log.warning(
+                    "adapter_match_failed",
+                    adapter=getattr(adapter, "vendor_id", type(adapter).__name__),
+                    error=type(exc).__name__,
+                )
                 continue
         return None
 

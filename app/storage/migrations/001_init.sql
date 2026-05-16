@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS raw_events (
     headers           JSONB NOT NULL DEFAULT '{}'::jsonb,
     payload           JSONB NOT NULL,
     signature_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    processing_status TEXT NOT NULL DEFAULT 'queued',   -- queued | processed | review | failed
+    processing_status TEXT NOT NULL DEFAULT 'queued',   -- queued | pending_llm | processed | review | failed
     processing_error  TEXT,
     processed_at      TIMESTAMPTZ
 );
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     event_id        TEXT NOT NULL REFERENCES raw_events(event_id) ON DELETE RESTRICT,
     kind            TEXT NOT NULL,
     payload         JSONB NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'pending',   -- pending | sent | dlq
+    status          TEXT NOT NULL DEFAULT 'pending',   -- pending | sending | sent | dlq
     attempts        INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_error      TEXT,

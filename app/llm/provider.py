@@ -43,7 +43,11 @@ def build_default_provider() -> LLMProvider:
     if settings.llm_provider == "openai":
         from app.llm.openai_provider import OpenAILLM
 
-        return OpenAILLM(api_key=settings.openai_api_key, model=settings.openai_model)
+        return OpenAILLM(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            timeout_s=settings.llm_request_timeout_s,
+        )
 
     from app.llm.stub import StubLLM
 

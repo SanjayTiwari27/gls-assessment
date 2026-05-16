@@ -19,23 +19,30 @@ from app.llm.provider import LLMResult
 # attribution should pull from the provider's billing API. Update on model
 # bumps.
 _PRICING: dict[str, tuple[float, float]] = {
-    "gpt-4o-mini":    (0.000150, 0.000600),
-    "gpt-4o":         (0.005000, 0.015000),
-    "gpt-4.1-mini":   (0.000400, 0.001600),
+    "gpt-4o-mini": (0.000150, 0.000600),
+    "gpt-4o": (0.005000, 0.015000),
+    "gpt-4.1-mini": (0.000400, 0.001600),
 }
 
 
 class OpenAILLM:
     name = "openai"
 
-    def __init__(self, *, api_key: str, model: str, base_url: str = "https://api.openai.com/v1") -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        timeout_s: float = 60.0,
+        base_url: str = "https://api.openai.com/v1",
+    ) -> None:
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
         self.model = model
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=60.0,
+            timeout=timeout_s,
         )
 
     async def complete(

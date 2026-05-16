@@ -97,6 +97,7 @@ INVOICE_TRANSITIONS: dict[InvoiceState | None, set[InvoiceState]] = {
 # apply_event
 # ---------------------------------------------------------------------------- #
 
+
 async def apply_event(conn: asyncpg.Connection, event: CanonicalEvent) -> ApplyOutcome:
     """Apply a canonical event to its projection.
 
@@ -134,7 +135,9 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
             ON CONFLICT (entity_id, event_id) DO NOTHING
             RETURNING entity_id
             """,
-            entity_id, ev.event_id, target_state.value,
+            entity_id,
+            ev.event_id,
+            target_state.value,
         )
         if applied is None:
             return "already_applied"
@@ -163,13 +166,18 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
             ev.location.model_dump() if ev.location else None,
         )
         if inserted is not None:
-            await _write_outbox(conn, ev.event_id, f"shipment.transitioned_to.{target_state.value}", {
-                "vendor_id": ev.vendor_id,
-                "external_id": ev.entity_external_id,
-                "from_state": None,
-                "to_state": target_state.value,
-                "event_timestamp": ev.event_timestamp.isoformat(),
-            })
+            await _write_outbox(
+                conn,
+                ev.event_id,
+                f"shipment.transitioned_to.{target_state.value}",
+                {
+                    "vendor_id": ev.vendor_id,
+                    "external_id": ev.entity_external_id,
+                    "from_state": None,
+                    "to_state": target_state.value,
+                    "event_timestamp": ev.event_timestamp.isoformat(),
+                },
+            )
             return "applied_initial"
 
         existing = await conn.fetchrow(
@@ -185,17 +193,28 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
         current_state = ShipmentState(existing["state"])
 
         if ev.event_timestamp < existing["last_applied_ts"]:
-            await _log_stale(conn, entity_id, ev.event_id, "older_than_last_applied", {
-                "current_state": current_state.value,
-                "current_last_applied_ts": existing["last_applied_ts"].isoformat(),
-                "event_timestamp": ev.event_timestamp.isoformat(),
-            })
+            await _log_stale(
+                conn,
+                entity_id,
+                ev.event_id,
+                "older_than_last_applied",
+                {
+                    "current_state": current_state.value,
+                    "current_last_applied_ts": existing["last_applied_ts"].isoformat(),
+                    "event_timestamp": ev.event_timestamp.isoformat(),
+                },
+            )
             return "stale_skipped"
 
         allowed = SHIPMENT_TRANSITIONS.get(current_state, set())
         if target_state not in allowed:
-            await _log_stale(conn, entity_id, ev.event_id,
-                             f"disallowed_transition:{current_state.value}->{target_state.value}", None)
+            await _log_stale(
+                conn,
+                entity_id,
+                ev.event_id,
+                f"disallowed_transition:{current_state.value}->{target_state.value}",
+                None,
+            )
             return "transition_rejected"
 
         # No-op transition (target_state == current_state): record but skip outbox.
@@ -210,8 +229,11 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
                        version = version + 1
                  WHERE entity_id = $4 AND version = $5
                 """,
-                ev.event_id, ev.event_timestamp, ev.reference_ids or {},
-                entity_id, existing["version"],
+                ev.event_id,
+                ev.event_timestamp,
+                ev.reference_ids or {},
+                entity_id,
+                existing["version"],
             )
             return "applied"
 
@@ -235,13 +257,18 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
             entity_id,
             existing["version"],
         )
-        await _write_outbox(conn, ev.event_id, f"shipment.transitioned_to.{target_state.value}", {
-            "vendor_id": ev.vendor_id,
-            "external_id": ev.entity_external_id,
-            "from_state": current_state.value,
-            "to_state": target_state.value,
-            "event_timestamp": ev.event_timestamp.isoformat(),
-        })
+        await _write_outbox(
+            conn,
+            ev.event_id,
+            f"shipment.transitioned_to.{target_state.value}",
+            {
+                "vendor_id": ev.vendor_id,
+                "external_id": ev.entity_external_id,
+                "from_state": current_state.value,
+                "to_state": target_state.value,
+                "event_timestamp": ev.event_timestamp.isoformat(),
+            },
+        )
         return "applied"
 
 
@@ -260,7 +287,9 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
             ON CONFLICT (entity_id, event_id) DO NOTHING
             RETURNING entity_id
             """,
-            entity_id, ev.event_id, target_state.value,
+            entity_id,
+            ev.event_id,
+            target_state.value,
         )
         if applied is None:
             return "already_applied"
@@ -290,15 +319,20 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
             ev.linked_references or {},
         )
         if inserted is not None:
-            await _write_outbox(conn, ev.event_id, f"invoice.transitioned_to.{target_state.value}", {
-                "vendor_id": ev.vendor_id,
-                "external_id": ev.entity_external_id,
-                "from_state": None,
-                "to_state": target_state.value,
-                "currency": currency,
-                "amount_minor": amount_minor,
-                "event_timestamp": ev.event_timestamp.isoformat(),
-            })
+            await _write_outbox(
+                conn,
+                ev.event_id,
+                f"invoice.transitioned_to.{target_state.value}",
+                {
+                    "vendor_id": ev.vendor_id,
+                    "external_id": ev.entity_external_id,
+                    "from_state": None,
+                    "to_state": target_state.value,
+                    "currency": currency,
+                    "amount_minor": amount_minor,
+                    "event_timestamp": ev.event_timestamp.isoformat(),
+                },
+            )
             return "applied_initial"
 
         existing = await conn.fetchrow(
@@ -314,17 +348,28 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
         current_state = InvoiceState(existing["state"])
 
         if ev.event_timestamp < existing["last_applied_ts"]:
-            await _log_stale(conn, entity_id, ev.event_id, "older_than_last_applied", {
-                "current_state": current_state.value,
-                "current_last_applied_ts": existing["last_applied_ts"].isoformat(),
-                "event_timestamp": ev.event_timestamp.isoformat(),
-            })
+            await _log_stale(
+                conn,
+                entity_id,
+                ev.event_id,
+                "older_than_last_applied",
+                {
+                    "current_state": current_state.value,
+                    "current_last_applied_ts": existing["last_applied_ts"].isoformat(),
+                    "event_timestamp": ev.event_timestamp.isoformat(),
+                },
+            )
             return "stale_skipped"
 
         allowed = INVOICE_TRANSITIONS.get(current_state, set())
         if target_state not in allowed and target_state != current_state:
-            await _log_stale(conn, entity_id, ev.event_id,
-                             f"disallowed_transition:{current_state.value}->{target_state.value}", None)
+            await _log_stale(
+                conn,
+                entity_id,
+                ev.event_id,
+                f"disallowed_transition:{current_state.value}->{target_state.value}",
+                None,
+            )
             return "transition_rejected"
 
         if target_state == current_state:
@@ -338,8 +383,11 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
                        version = version + 1
                  WHERE entity_id = $4 AND version = $5
                 """,
-                ev.event_id, ev.event_timestamp, ev.linked_references or {},
-                entity_id, existing["version"],
+                ev.event_id,
+                ev.event_timestamp,
+                ev.linked_references or {},
+                entity_id,
+                existing["version"],
             )
             return "applied"
 
@@ -367,21 +415,27 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
             entity_id,
             existing["version"],
         )
-        await _write_outbox(conn, ev.event_id, f"invoice.transitioned_to.{target_state.value}", {
-            "vendor_id": ev.vendor_id,
-            "external_id": ev.entity_external_id,
-            "from_state": current_state.value,
-            "to_state": target_state.value,
-            "currency": currency or existing["currency"],
-            "amount_minor": amount_minor or existing["amount_minor"],
-            "event_timestamp": ev.event_timestamp.isoformat(),
-        })
+        await _write_outbox(
+            conn,
+            ev.event_id,
+            f"invoice.transitioned_to.{target_state.value}",
+            {
+                "vendor_id": ev.vendor_id,
+                "external_id": ev.entity_external_id,
+                "from_state": current_state.value,
+                "to_state": target_state.value,
+                "currency": currency or existing["currency"],
+                "amount_minor": amount_minor or existing["amount_minor"],
+                "event_timestamp": ev.event_timestamp.isoformat(),
+            },
+        )
         return "applied"
 
 
 # ---------------------------------------------------------------------------- #
 # helpers
 # ---------------------------------------------------------------------------- #
+
 
 async def _get_or_create_entity(
     conn: asyncpg.Connection,
@@ -392,7 +446,9 @@ async def _get_or_create_entity(
 ) -> int:
     row = await conn.fetchrow(
         "SELECT id FROM entities WHERE vendor_id=$1 AND entity_type=$2 AND external_id=$3",
-        vendor_id, entity_type, external_id,
+        vendor_id,
+        entity_type,
+        external_id,
     )
     if row is not None:
         return int(row["id"])
@@ -404,7 +460,9 @@ async def _get_or_create_entity(
         ON CONFLICT (vendor_id, entity_type, external_id) DO NOTHING
         RETURNING id
         """,
-        vendor_id, entity_type, external_id,
+        vendor_id,
+        entity_type,
+        external_id,
     )
     if entity_id is not None:
         return int(entity_id)
@@ -412,7 +470,9 @@ async def _get_or_create_entity(
     # Concurrent insert: read again.
     row = await conn.fetchrow(
         "SELECT id FROM entities WHERE vendor_id=$1 AND entity_type=$2 AND external_id=$3",
-        vendor_id, entity_type, external_id,
+        vendor_id,
+        entity_type,
+        external_id,
     )
     assert row is not None  # invariant: just lost the race; the row exists
     return int(row["id"])
@@ -430,7 +490,10 @@ async def _log_stale(
         INSERT INTO stale_event_log (entity_id, event_id, reason, detail)
         VALUES ($1, $2, $3, $4::jsonb)
         """,
-        entity_id, event_id, reason, detail or {},
+        entity_id,
+        event_id,
+        reason,
+        detail or {},
     )
 
 
@@ -441,5 +504,7 @@ async def _write_outbox(conn: asyncpg.Connection, event_id: str, kind: str, payl
         VALUES ($1, $2, $3::jsonb, 'pending')
         ON CONFLICT (event_id, kind) DO NOTHING
         """,
-        event_id, kind, payload,
+        event_id,
+        kind,
+        payload,
     )

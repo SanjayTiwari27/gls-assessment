@@ -8,13 +8,17 @@ execution side.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from unittest.mock import AsyncMock
 
 import httpx
+import orjson
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 
+from app.config import get_settings
 from app.hashing import compute_event_id
 
 pytestmark = pytest.mark.e2e
@@ -32,6 +36,7 @@ async def app_client(clean_db, monkeypatch):
     # don't touch real Redis.
     from app import db as db_mod
     from app import queue as queue_mod
+
     monkeypatch.setattr(queue_mod, "init_queue", init_queue_mock)
     monkeypatch.setattr(queue_mod, "close_queue", close_queue_mock)
     monkeypatch.setattr(queue_mod, "enqueue_process", enqueue_mock)
@@ -49,9 +54,10 @@ async def app_client(clean_db, monkeypatch):
 
     from app.main import app
 
-    async with LifespanManager(app), httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with (
+        LifespanManager(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+    ):
         yield client, enqueue_mock
 
 
@@ -124,3 +130,63 @@ async def test_vendor_scoped_path(app_client, fixture_payloads, clean_db):
             "SELECT vendor_id FROM raw_events WHERE event_id=$1", resp.json()["event_id"]
         )
     assert vendor == "maersk"
+
+
+async def test_vendor_signature_verified_when_secret_configured(app_client, fixture_payloads, clean_db):
+    client, _ = app_client
+    payload = fixture_payloads["01_maersk_in_transit"]
+    body = orjson.dumps(payload)
+
+    settings = get_settings()
+    old_secrets = dict(settings.webhook_vendor_secrets)
+    old_enforce = settings.webhook_signature_enforce
+    old_header = settings.webhook_signature_header
+    settings.webhook_vendor_secrets = {"maersk": "test-secret"}
+    settings.webhook_signature_enforce = True
+    settings.webhook_signature_header = "X-Signature"
+
+    try:
+        sig = hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
+        resp = await client.post(
+            "/webhooks/maersk",
+            content=body,
+            headers={"content-type": "application/json", "X-Signature": f"sha256={sig}"},
+        )
+        assert resp.status_code == 202
+        event_id = resp.json()["event_id"]
+        async with clean_db.acquire() as conn:
+            verified = await conn.fetchval(
+                "SELECT signature_verified FROM raw_events WHERE event_id=$1",
+                event_id,
+            )
+        assert verified is True
+    finally:
+        settings.webhook_vendor_secrets = old_secrets
+        settings.webhook_signature_enforce = old_enforce
+        settings.webhook_signature_header = old_header
+
+
+async def test_vendor_signature_rejected_when_invalid_and_enforced(app_client, fixture_payloads):
+    client, _ = app_client
+    payload = fixture_payloads["01_maersk_in_transit"]
+    body = orjson.dumps(payload)
+
+    settings = get_settings()
+    old_secrets = dict(settings.webhook_vendor_secrets)
+    old_enforce = settings.webhook_signature_enforce
+    old_header = settings.webhook_signature_header
+    settings.webhook_vendor_secrets = {"maersk": "test-secret"}
+    settings.webhook_signature_enforce = True
+    settings.webhook_signature_header = "X-Signature"
+
+    try:
+        resp = await client.post(
+            "/webhooks/maersk",
+            content=body,
+            headers={"content-type": "application/json", "X-Signature": "sha256=deadbeef"},
+        )
+        assert resp.status_code == 401
+    finally:
+        settings.webhook_vendor_secrets = old_secrets
+        settings.webhook_signature_enforce = old_enforce
+        settings.webhook_signature_header = old_header

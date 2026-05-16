@@ -34,3 +34,12 @@ def test_llm_cache_key_versioned():
     k2 = llm_cache_key("v2", payload, "v1")
     k3 = llm_cache_key("v1", payload, "v2")
     assert k1 != k2 != k3 != k1
+
+
+def test_llm_cache_key_vendor_scoped():
+    payload = {"x": 1}
+    shared = llm_cache_key("v1", payload, "v1")
+    maersk = llm_cache_key("v1", payload, "v1", vendor_scope="maersk")
+    one = llm_cache_key("v1", payload, "v1", vendor_scope="ocean_network_express")
+    assert shared != maersk
+    assert maersk != one

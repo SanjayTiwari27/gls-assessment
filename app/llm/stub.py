@@ -42,7 +42,7 @@ class StubLLM:
         return LLMResult(
             text=text,
             model=self.model,
-            tokens_in=len(prompt) // 4,   # rough heuristic, audit-only
+            tokens_in=len(prompt) // 4,  # rough heuristic, audit-only
             tokens_out=len(text) // 4,
             latency_ms=latency_ms,
             cost_estimate=0.0,
@@ -90,6 +90,7 @@ def _classify_extract(payload: dict[str, Any]) -> dict[str, Any]:
 # Heuristic fingerprints
 # --------------------------------------------------------------------------- #
 
+
 def _looks_like_invoice(p: dict[str, Any]) -> bool:
     if str(p.get("source", "")).lower() == "globalfreightpay.api":
         return True
@@ -118,10 +119,26 @@ def _looks_like_shipment(p: dict[str, Any]) -> bool:
 # --------------------------------------------------------------------------- #
 
 _SHIP_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("shipment.delivered", ("released to consignee", "delivered", "package handed", "empty container returned")),
+    (
+        "shipment.delivered",
+        ("released to consignee", "delivered", "package handed", "empty container returned"),
+    ),
     ("shipment.out_for_delivery", ("out for delivery", "delivery scheduled")),
-    ("shipment.in_transit", ("loaded onboard", "sailed", "vessel arrived", "discharged", "transhipment", "in transit")),
-    ("shipment.picked_up", ("empty container released to shipper", "received at origin", "container received", "gate-in", "gate in", "picked up")),
+    (
+        "shipment.in_transit",
+        ("loaded onboard", "sailed", "vessel arrived", "discharged", "transhipment", "in transit"),
+    ),
+    (
+        "shipment.picked_up",
+        (
+            "empty container released to shipper",
+            "received at origin",
+            "container received",
+            "gate-in",
+            "gate in",
+            "picked up",
+        ),
+    ),
     ("shipment.exception", ("exception", "delay", "rolled", "blocked", "hold")),
     ("shipment.cancelled", ("cancelled", "canceled", "voided shipment")),
 ]
@@ -129,8 +146,14 @@ _SHIP_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 _INV_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("invoice.refunded", ("refund", "reversed", "reversal", "credit note")),
     ("invoice.voided", ("voided", "cancelled", "canceled", "annulled")),
-    ("invoice.paid", ("settled in full", "settled", "paid in full", "payment received", "remitted", "payment confirmed")),
-    ("invoice.issued", ("freight invoice raised", "invoice raised", "invoice issued", "issued", "billed", "raised")),
+    (
+        "invoice.paid",
+        ("settled in full", "settled", "paid in full", "payment received", "remitted", "payment confirmed"),
+    ),
+    (
+        "invoice.issued",
+        ("freight invoice raised", "invoice raised", "invoice issued", "issued", "billed", "raised"),
+    ),
 ]
 
 
@@ -161,10 +184,7 @@ def _extract_shipment(p: dict[str, Any]) -> dict[str, Any]:
     event_type = _classify_text(str(milestone), _SHIP_KEYWORDS)
 
     ts_raw = (
-        p.get("milestone_at")
-        or p.get("milestone_local_time")
-        or p.get("event_time")
-        or p.get("timestamp")
+        p.get("milestone_at") or p.get("milestone_local_time") or p.get("event_time") or p.get("timestamp")
     )
     event_ts: str | None = None
     if ts_raw:
@@ -180,11 +200,14 @@ def _extract_shipment(p: dict[str, Any]) -> dict[str, Any]:
     elif p.get("port_of_discharge") or p.get("port_of_loading"):
         location = {
             "code": p.get("port_of_discharge") or p.get("port_of_loading"),
-            "name": None, "latitude": None, "longitude": None,
+            "name": None,
+            "latitude": None,
+            "longitude": None,
         }
 
     reference_ids = {
-        k: v for k, v in {
+        k: v
+        for k, v in {
             "mbl_number": mbl,
             "house_bl": house_bl,
             "master_bl": master_bl,
@@ -196,7 +219,8 @@ def _extract_shipment(p: dict[str, Any]) -> dict[str, Any]:
             "shipper_ref": p.get("shipper_ref"),
             "consignee": p.get("consignee"),
             "delivery_order_no": p.get("delivery_order_no"),
-        }.items() if v
+        }.items()
+        if v
     }
 
     confidence = 0.85 if (ext_id and event_type and event_ts) else 0.4
@@ -261,14 +285,16 @@ def _extract_invoice(p: dict[str, Any]) -> dict[str, Any]:
     line_items = transaction.get("line_items") if isinstance(transaction.get("line_items"), list) else None
 
     linked_references = {
-        k: v for k, v in {
+        k: v
+        for k, v in {
             "carrier": p.get("carrier"),
             "linked_bl": p.get("linked_bl"),
             "channel": p.get("channel"),
             "remitter": transaction.get("remitter"),
             "memo": transaction.get("memo"),
             "line_items": line_items,
-        }.items() if v
+        }.items()
+        if v
     }
 
     confidence = 0.85 if (doc_ref and event_type and event_ts) else 0.4

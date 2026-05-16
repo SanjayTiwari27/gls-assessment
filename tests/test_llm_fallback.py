@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from app.llm.fallback import LLMFallback, LLMValidationError, load_target_schema
+from app.llm.fallback import BudgetGuard, LLMFallback, LLMValidationError, load_target_schema
 from app.llm.provider import LLMResult
 
 pytestmark = pytest.mark.e2e
@@ -48,26 +48,29 @@ class MockLLM:
         )
 
 
-VALID_SHIPMENT_OUTPUT = json.dumps({
-    "classification": "shipment",
-    "vendor_id": "unknown_vendor",
-    "confidence": 0.7,
-    "entity_external_id": "BL123:CONT1",
-    "event_type": "shipment.in_transit",
-    "event_timestamp": "2026-04-21T22:47:00+00:00",
-    "amount": None,
-    "due_at": None,
-    "reference_ids": {"bl": "BL123"},
-    "linked_references": None,
-    "location": None,
-    "raw_milestone": "in transit",
-    "raw_kind": None,
-    "summary": None,
-    "reason": None,
-})
+VALID_SHIPMENT_OUTPUT = json.dumps(
+    {
+        "classification": "shipment",
+        "vendor_id": "unknown_vendor",
+        "confidence": 0.7,
+        "entity_external_id": "BL123:CONT1",
+        "event_type": "shipment.in_transit",
+        "event_timestamp": "2026-04-21T22:47:00+00:00",
+        "amount": None,
+        "due_at": None,
+        "reference_ids": {"bl": "BL123"},
+        "linked_references": None,
+        "location": None,
+        "raw_milestone": "in transit",
+        "raw_kind": None,
+        "summary": None,
+        "reason": None,
+    }
+)
 
 
 INVALID_OUTPUT = '{"classification": "shipment", "missing_required_fields": true}'
+FENCED_VALID_OUTPUT = f"```json\n{VALID_SHIPMENT_OUTPUT}\n```"
 
 
 @pytest.mark.asyncio
@@ -81,7 +84,8 @@ async def test_first_call_caches_and_audits(clean_db):
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO raw_events (event_id, payload) VALUES ($1, $2::jsonb)",
-            "ev-1", payload,
+            "ev-1",
+            payload,
         )
 
     outcome = await fallback.classify_extract(event_id="ev-1", vendor_hint="unknown", payload=payload)
@@ -106,7 +110,9 @@ async def test_second_identical_call_hits_cache(clean_db):
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO raw_events (event_id, payload) VALUES ($1, $2::jsonb), ($3, $2::jsonb)",
-            "ev-a", payload, "ev-b",
+            "ev-a",
+            payload,
+            "ev-b",
         )
 
     a = await fallback.classify_extract(event_id="ev-a", vendor_hint="unknown", payload=payload)
@@ -114,7 +120,7 @@ async def test_second_identical_call_hits_cache(clean_db):
 
     assert a.source == "llm"
     assert b.source == "llm_cache"
-    assert len(mock.calls) == 1   # provider hit only once
+    assert len(mock.calls) == 1  # provider hit only once
 
     async with pool.acquire() as conn:
         audits = await conn.fetch("SELECT event_id, source FROM llm_audit ORDER BY event_id")
@@ -132,7 +138,8 @@ async def test_invalid_then_valid_one_retry(clean_db):
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO raw_events (event_id, payload) VALUES ($1, $2::jsonb)",
-            "ev-3", payload,
+            "ev-3",
+            payload,
         )
 
     outcome = await fallback.classify_extract(event_id="ev-3", vendor_hint="unknown", payload=payload)
@@ -140,6 +147,24 @@ async def test_invalid_then_valid_one_retry(clean_db):
     assert len(mock.calls) == 2
     # Retry prompt should mention the validation error.
     assert "rejected by the schema" in mock.calls[1]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_markdown_fenced_json_output_is_accepted(clean_db):
+    pool = clean_db
+    mock = MockLLM([FENCED_VALID_OUTPUT])
+    fallback = LLMFallback(provider=mock, pool=pool)
+    payload = {"k": 1}
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO raw_events (event_id, payload) VALUES ($1, $2::jsonb)",
+            "ev-fenced",
+            payload,
+        )
+
+    outcome = await fallback.classify_extract(event_id="ev-fenced", vendor_hint="unknown", payload=payload)
+    assert outcome.data["classification"] == "shipment"
 
 
 @pytest.mark.asyncio
@@ -152,7 +177,8 @@ async def test_always_invalid_raises_and_writes_no_cache(clean_db):
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO raw_events (event_id, payload) VALUES ($1, $2::jsonb)",
-            "ev-4", payload,
+            "ev-4",
+            payload,
         )
 
     with pytest.raises(LLMValidationError):
@@ -173,3 +199,33 @@ async def test_target_schema_loads_cleanly():
     schema = load_target_schema()
     assert schema["title"] == "WebhookExtractionV1"
     assert "classification" in schema["required"]
+
+
+@pytest.mark.asyncio
+async def test_budget_guard_ignores_cache_hit_audit_cost(clean_db):
+    pool = clean_db
+    guard = BudgetGuard(pool)
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO raw_events (event_id, payload, headers)
+            VALUES
+                ('ev-cache', '{}'::jsonb, '{}'::jsonb),
+                ('ev-real', '{}'::jsonb, '{}'::jsonb)
+            """
+        )
+        await conn.execute(
+            """
+            INSERT INTO llm_audit (
+                event_id, source, model, prompt_version, schema_version,
+                tokens_in, tokens_out, latency_ms, cost_estimate, decision
+            )
+            VALUES
+                ('ev-cache', 'llm_cache', 'mock', 'v1', 'v1', 1, 1, 1, 999.0, 'maersk'),
+                ('ev-real', 'llm', 'mock', 'v1', 'v1', 1, 1, 1, 0.01, 'maersk')
+            """
+        )
+
+    # The huge cache-hit audit row must not count against budget.
+    assert await guard.allow(vendor_id="maersk", estimated_cost=0.01) is True

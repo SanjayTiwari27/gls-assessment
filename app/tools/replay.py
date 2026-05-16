@@ -123,6 +123,7 @@ async def truncate(pool) -> None:
             """
                 TRUNCATE TABLE
                     requires_human_review,
+                    canonical_events,
                     outbox,
                     stale_event_log,
                     applied_events,

@@ -51,7 +51,7 @@ class BudgetExceeded(Exception):
 @dataclass(slots=True)
 class LLMOutcome:
     data: dict[str, Any]
-    source: str             # 'llm' | 'llm_cache'
+    source: str  # 'llm' | 'llm_cache'
     model: str
     prompt_version: str
     schema_version: str
@@ -87,8 +87,8 @@ class BudgetGuard:
             row = await conn.fetchrow(
                 """
                 SELECT
-                    COALESCE(SUM(cost_estimate) FILTER (WHERE created_at::date = $1), 0) AS today_total,
-                    COALESCE(SUM(cost_estimate) FILTER (WHERE created_at::date = $1 AND substr(decision, 1, 100) = $2), 0) AS today_vendor
+                    COALESCE(SUM(cost_estimate) FILTER (WHERE created_at::date = $1 AND source = 'llm'), 0) AS today_total,
+                    COALESCE(SUM(cost_estimate) FILTER (WHERE created_at::date = $1 AND source = 'llm' AND decision = $2), 0) AS today_vendor
                 FROM llm_audit
                 """,
                 today,
@@ -106,7 +106,9 @@ class BudgetGuard:
 class LLMFallback:
     """High-level orchestration."""
 
-    def __init__(self, *, provider: LLMProvider, pool: asyncpg.Pool, budget: BudgetGuard | None = None) -> None:
+    def __init__(
+        self, *, provider: LLMProvider, pool: asyncpg.Pool, budget: BudgetGuard | None = None
+    ) -> None:
         self._provider = provider
         self._pool = pool
         self._budget = budget or BudgetGuard(pool)
@@ -127,7 +129,12 @@ class LLMFallback:
         vendor_hint: str,
         payload: dict[str, Any],
     ) -> LLMOutcome:
-        cache_key = llm_cache_key(self._prompt_version, payload, self._schema_version)
+        cache_key = llm_cache_key(
+            self._prompt_version,
+            payload,
+            self._schema_version,
+            vendor_scope=vendor_hint,
+        )
 
         cached = await self._cache_get(cache_key)
         if cached is not None:
@@ -212,11 +219,15 @@ class LLMFallback:
         )
 
     def _parse_and_validate(self, text: str) -> dict[str, Any]:
-        # Strip any accidental code fences.
+        # Strip accidental markdown code fences.
         cleaned = text.strip()
         if cleaned.startswith("```"):
-            cleaned = cleaned.split("```", 2)[-1]
-            cleaned = cleaned.replace("json\n", "", 1).strip()
+            lines = cleaned.splitlines()
+            if lines and lines[0].lstrip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
         data = orjson.loads(cleaned)
         jsonschema.validate(instance=data, schema=self._schema)
         if not isinstance(data, dict):

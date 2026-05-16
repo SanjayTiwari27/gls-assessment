@@ -16,9 +16,9 @@ from dateutil import parser as dtparse
 # out of the box (notably regional ones our sample vendors use). Always prefer
 # numeric offsets in production payloads — these are last-resort.
 _TZ_ALIASES: Final[dict[str, int]] = {
-    "WIB": 7 * 3600,    # Western Indonesia Time, UTC+7
-    "WITA": 8 * 3600,   # Central Indonesia, UTC+8
-    "WIT": 9 * 3600,    # Eastern Indonesia, UTC+9
+    "WIB": 7 * 3600,  # Western Indonesia Time, UTC+7
+    "WITA": 8 * 3600,  # Central Indonesia, UTC+8
+    "WIT": 9 * 3600,  # Eastern Indonesia, UTC+9
     "JST": 9 * 3600,
     "KST": 9 * 3600,
     "HKT": 8 * 3600,

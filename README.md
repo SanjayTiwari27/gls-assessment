@@ -99,7 +99,7 @@ The six sample payloads exercise every interesting code path:
 
 ### One endpoint, vendor detected later
 
-The assessment spec says the endpoint must accept "any arbitrary JSON". So the canonical endpoint is `POST /webhooks` (no vendor in the path), and vendor identity is derived in the **worker** by the adapter registry. A second `POST /webhooks/{vendor_id}` exists as a future hook for vendor-specific signature verification, but is not on the critical path.
+The assessment spec says the endpoint must accept "any arbitrary JSON". So the canonical endpoint is `POST /webhooks` (no vendor in the path), and vendor identity is derived in the **worker** by the adapter registry. A second `POST /webhooks/{vendor_id}` is available for vendor-specific routing and optional HMAC signature verification when a per-vendor secret is configured.
 
 ### Content-addressed dedupe
 
@@ -148,6 +148,7 @@ See [`app/storage/migrations/001_init.sql`](app/storage/migrations/001_init.sql)
 | `outbox` | Pending side-effects. PK `(event_id, kind)`. |
 | `llm_cache` | Per-`(prompt_version, payload_hash, schema_version)` cached LLM outputs. |
 | `llm_audit` | Per-call audit (tokens, latency, cost, decision). Cache hits also written. |
+| `canonical_events` | One strict normalized canonical record per `event_id` (including unclassified). |
 | `requires_human_review` | Events that failed both deterministic and LLM paths. |
 
 All projections are **rebuildable** from `raw_events`.
@@ -315,7 +316,7 @@ make seed
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/webhooks` | Accept any JSON payload. Returns `{event_id, deduplicated, trace_id}`. |
-| POST | `/webhooks/{vendor_id}` | Same, with vendor known up-front (future signature verification hook). |
+| POST | `/webhooks/{vendor_id}` | Same, with vendor known up-front and optional signature verification hook. |
 | GET | `/healthz` | Liveness. |
 | GET | `/readyz` | DB + Redis ping. |
 | GET | `/metrics` | Prometheus exposition. |
@@ -339,6 +340,7 @@ The test pyramid:
 - DB-backed e2e tests covering: receiver dedup, state-machine transitions/idempotency/stale handling, full pipeline against the appendix, outbox dispatch + retry + DLQ, LLM fallback (cache/retry/failure), replay byte-identical-projection regression.
 
 E2e tests **skip automatically** if Postgres is unreachable, so `pytest` runs cleanly on any laptop.
+Set `REQUIRE_E2E_DB=1` to fail fast instead of skipping when DB is unavailable.
 
 ### Replay
 
@@ -356,8 +358,8 @@ make replay ARGS="--truncate-projections --mode inline"
 
 These are conscious choices that I would change for production:
 
-- **Single endpoint `POST /webhooks`.** The spec says "any arbitrary JSON", so vendor identity is derived in the worker by `AdapterRegistry`. Production should expose `POST /webhooks/{vendor_id}` per integration so per-vendor secrets enable signature verification at the receiver.
-- **Signature verification scaffolded, not enforced.** The schema has `signature_verified bool` already; the verification function is a stub. None of the appendix samples ship signatures.
+- **Single endpoint `POST /webhooks`.** The spec says "any arbitrary JSON", so vendor identity is derived in the worker by `AdapterRegistry`. `POST /webhooks/{vendor_id}` is available for vendor-scoped verification and routing.
+- **Signature verification is intentionally lightweight for assessment scope.** We support optional HMAC verification on vendor-scoped routes when `WEBHOOK_VENDOR_SECRETS` is configured; production still needs KMS-backed secret rotation and vendor-specific signature formats.
 - **Deterministic adapters for 4 sample vendors.** A real fleet has dozens; we'd write thin adapters incrementally as vendors graduate from "rare" (LLM-handled) to "frequent" (adapter-handled). The architecture supports it without changing the worker.
 - **arq (Redis) instead of Kafka/SQS.** arq keeps local dev to a single `docker compose up`. Migration to Kafka/SQS is a 50-line change in [`app/queue.py`](app/queue.py) — the worker contract is "give me an event_id".
 - **Outbox dispatcher's downstream is a logging stub.** Production would inject a real HTTP/SQS/Kafka client behind the same `DownstreamSink` interface.

@@ -40,7 +40,9 @@ async def _seed_outbox(pool, n: int = 3) -> None:
                 INSERT INTO outbox (event_id, kind, payload, status)
                 VALUES ($1, $2, $3::jsonb, 'pending')
                 """,
-                f"e{i}", "shipment.transitioned_to.IN_TRANSIT", {"i": i},
+                f"e{i}",
+                "shipment.transitioned_to.IN_TRANSIT",
+                {"i": i},
             )
 
 

@@ -44,6 +44,12 @@ class Settings(BaseSettings):
 
     # Hot path
     receiver_max_payload_bytes: int = 1_000_000  # 1 MB
+    webhook_vendor_secrets: dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional map of vendor_id -> shared secret for HMAC webhook signature verification.",
+    )
+    webhook_signature_header: str = "X-Signature"
+    webhook_signature_enforce: bool = False
 
     # Worker
     worker_max_retries: int = 5

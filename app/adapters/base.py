@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 
 from app.domain.canonical import CanonicalEvent
 
-AdapterStatus = Literal["ok", "needs_llm", "unsupported"]
+AdapterStatus = Literal["ok", "needs_llm", "unsupported", "deferred"]
 
 
 @dataclass(slots=True)
@@ -23,6 +23,8 @@ class AdapterResult:
     - ``needs_llm`` → adapter recognized the vendor but could not extract all
       required fields with high confidence; the worker should call the LLM.
     - ``unsupported`` → adapter does not recognize this vendor at all.
+    - ``deferred`` → processing should be retried later (for example LLM budget
+      exhaustion).
     """
 
     status: AdapterStatus

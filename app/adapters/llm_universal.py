@@ -61,7 +61,7 @@ class LLMUniversalAdapter:
             )
         except BudgetExceeded:
             return AdapterResult(
-                status="needs_llm",
+                status="deferred",
                 missing_fields=["budget_exceeded"],
                 schema_version=self.schema_version,
                 detail={"reason": "llm_budget_exceeded"},

@@ -29,9 +29,29 @@ async def process_webhook(ctx: dict[str, Any], event_id: str, trace_id: str | No
         trace_id = new_trace_id()
     set_trace_id(trace_id)
     log.info("worker_job_start", event_id=event_id)
-    outcome = await process_event(pool, event_id, trace_id=trace_id)
+    try:
+        outcome = await process_event(pool, event_id, trace_id=trace_id)
+    except Exception as exc:
+        await _mark_failed(pool, event_id, error=str(exc))
+        log.exception("worker_job_failed", event_id=event_id)
+        raise
     log.info("worker_job_done", event_id=event_id, outcome=outcome)
     return outcome
+
+
+async def _mark_failed(pool, event_id: str, *, error: str) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE raw_events
+               SET processing_status='failed',
+                   processing_error=$2,
+                   processed_at=now()
+             WHERE event_id=$1
+            """,
+            event_id,
+            error[:500],
+        )
 
 
 async def startup(ctx: dict[str, Any]) -> None:

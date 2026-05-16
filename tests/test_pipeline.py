@@ -26,7 +26,9 @@ async def _ingest_fixture(pool, payload: dict, *, vendor_hint: str | None = None
             VALUES ($1, $2, $3::jsonb, '{}'::jsonb)
             ON CONFLICT (event_id) DO NOTHING
             """,
-            event_id, vendor_hint, payload,
+            event_id,
+            vendor_hint,
+            payload,
         )
     return event_id
 
@@ -55,10 +57,15 @@ async def test_full_pipeline_against_appendix(clean_db, fixture_payloads):
         await process_event(pool, eid)
 
     async with pool.acquire() as conn:
-        ship_rows = await conn.fetch("SELECT vendor_id, external_id, state FROM shipments ORDER BY vendor_id, external_id")
-        inv_rows = await conn.fetch("SELECT vendor_id, external_id, state, currency, amount_minor FROM invoices ORDER BY external_id")
+        ship_rows = await conn.fetch(
+            "SELECT vendor_id, external_id, state FROM shipments ORDER BY vendor_id, external_id"
+        )
+        inv_rows = await conn.fetch(
+            "SELECT vendor_id, external_id, state, currency, amount_minor FROM invoices ORDER BY external_id"
+        )
         stale_rows = await conn.fetch("SELECT reason FROM stale_event_log")
         review_rows = await conn.fetch("SELECT count(*) AS n FROM requires_human_review")
+        canonical_count = await conn.fetchval("SELECT count(*) FROM canonical_events")
 
     ships_by_key = {(r["vendor_id"], r["external_id"]): r["state"] for r in ship_rows}
     invs_by_key = {r["external_id"]: dict(r) for r in inv_rows}
@@ -75,6 +82,8 @@ async def test_full_pipeline_against_appendix(clean_db, fixture_payloads):
     assert any(r["reason"] == "older_than_last_applied" for r in stale_rows)
     # No human review needed.
     assert review_rows[0]["n"] == 0
+    # Every processed event is persisted as canonical output (including unclassified).
+    assert canonical_count == len(order)
 
 
 @pytest.mark.asyncio
@@ -96,14 +105,18 @@ async def test_replay_produces_identical_projections(clean_db, fixture_payloads)
         await process_event(pool, eid)
 
     async with pool.acquire() as conn:
-        before_ships = await conn.fetch("SELECT vendor_id, external_id, state, last_applied_event_id FROM shipments ORDER BY vendor_id, external_id")
-        before_invs = await conn.fetch("SELECT external_id, state, currency, amount_minor FROM invoices ORDER BY external_id")
+        before_ships = await conn.fetch(
+            "SELECT vendor_id, external_id, state, last_applied_event_id FROM shipments ORDER BY vendor_id, external_id"
+        )
+        before_invs = await conn.fetch(
+            "SELECT external_id, state, currency, amount_minor FROM invoices ORDER BY external_id"
+        )
 
     # Wipe projections, keep raw_events.
     async with pool.acquire() as conn:
         await conn.execute("""
             TRUNCATE TABLE
-                requires_human_review, outbox, stale_event_log,
+                requires_human_review, canonical_events, outbox, stale_event_log,
                 applied_events, shipments, invoices, entities
             CASCADE
         """)
@@ -113,8 +126,12 @@ async def test_replay_produces_identical_projections(clean_db, fixture_payloads)
         await process_event(pool, eid)
 
     async with pool.acquire() as conn:
-        after_ships = await conn.fetch("SELECT vendor_id, external_id, state, last_applied_event_id FROM shipments ORDER BY vendor_id, external_id")
-        after_invs = await conn.fetch("SELECT external_id, state, currency, amount_minor FROM invoices ORDER BY external_id")
+        after_ships = await conn.fetch(
+            "SELECT vendor_id, external_id, state, last_applied_event_id FROM shipments ORDER BY vendor_id, external_id"
+        )
+        after_invs = await conn.fetch(
+            "SELECT external_id, state, currency, amount_minor FROM invoices ORDER BY external_id"
+        )
 
     assert [dict(r) for r in before_ships] == [dict(r) for r in after_ships]
     assert [dict(r) for r in before_invs] == [dict(r) for r in after_invs]
@@ -173,5 +190,42 @@ async def test_unsupported_payload_routes_to_human_review(clean_db, monkeypatch)
     assert out == "requires_review"
 
     async with pool.acquire() as conn:
-        review_count = await conn.fetchval("SELECT count(*) FROM requires_human_review WHERE event_id = $1", eid)
+        review_count = await conn.fetchval(
+            "SELECT count(*) FROM requires_human_review WHERE event_id = $1", eid
+        )
     assert review_count == 1
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_payload_is_marked_pending_llm(clean_db, monkeypatch):
+    pool = clean_db
+    reset_pipeline_singletons()
+
+    from app.adapters.base import AdapterResult
+    from app.adapters.llm_universal import LLMUniversalAdapter
+    from app.workers import pipeline as pipeline_mod
+
+    class BudgetDeferredAdapter(LLMUniversalAdapter):
+        def __init__(self):
+            pass
+
+        async def normalize(self, payload, headers, event_id, *, vendor_hint=None):
+            return AdapterResult(status="deferred", detail={"reason": "llm_budget_exceeded"})
+
+    def fake_get_universal_adapter(_pool):
+        return BudgetDeferredAdapter()
+
+    monkeypatch.setattr(pipeline_mod, "get_universal_adapter", fake_get_universal_adapter)
+
+    payload = {"unknown": {"shape": "for-budget-test"}}
+    eid = await _ingest_fixture(pool, payload)
+    out = await process_event(pool, eid)
+    assert out == "pending_llm"
+
+    async with pool.acquire() as conn:
+        status = await conn.fetchval("SELECT processing_status FROM raw_events WHERE event_id = $1", eid)
+        review_count = await conn.fetchval(
+            "SELECT count(*) FROM requires_human_review WHERE event_id = $1", eid
+        )
+    assert status == "pending_llm"
+    assert review_count == 0

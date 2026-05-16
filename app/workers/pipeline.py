@@ -21,6 +21,7 @@ from app.adapters.base import AdapterResult
 from app.adapters.llm_universal import LLMUniversalAdapter
 from app.adapters.registry import AdapterRegistry
 from app.adapters.registry import registry as default_registry
+from app.domain.canonical import CanonicalEvent
 from app.domain.state_machine import apply_event
 from app.llm.fallback import LLMFallback
 from app.llm.provider import build_default_provider
@@ -83,7 +84,7 @@ async def process_event(
     headers: dict[str, Any] = row["headers"] or {}
 
     adapter = registry.resolve(payload, headers)
-    vendor_for_metric = (adapter.vendor_id if adapter else (row["vendor_id"] or "unknown"))
+    vendor_for_metric = adapter.vendor_id if adapter else (row["vendor_id"] or "unknown")
 
     canonical = None
     detail: dict[str, Any] = {}
@@ -108,8 +109,18 @@ async def process_event(
         if result.status == "ok" and result.canonical_event is not None:
             canonical = result.canonical_event
             detail = {"adapter": "llm_universal", **result.detail}
+        elif result.status in {"deferred", "needs_llm"}:
+            reason = result.detail.get("reason", "llm_deferred")
+            await _mark_pending_llm(pool, event_id, reason=reason, detail=result.detail)
+            WORKER_PROCESS_TOTAL.labels(
+                vendor=vendor_for_metric, classification="unknown", outcome="pending_llm"
+            ).inc()
+            WORKER_LATENCY.observe(time.perf_counter() - started)
+            return "pending_llm"
         else:
-            await _mark_review(pool, event_id, reason=result.detail.get("reason", "unsupported"), detail=result.detail)
+            await _mark_review(
+                pool, event_id, reason=result.detail.get("reason", "unsupported"), detail=result.detail
+            )
             WORKER_PROCESS_TOTAL.labels(
                 vendor=vendor_for_metric, classification="unknown", outcome="review"
             ).inc()
@@ -119,7 +130,8 @@ async def process_event(
     classification = canonical.classification.value
     vendor_for_metric = canonical.vendor_id
 
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
+        await _upsert_canonical_event(conn, canonical)
         outcome = await apply_event(conn, canonical)
         await conn.execute(
             """
@@ -130,7 +142,8 @@ async def process_event(
                    processed_at = now()
              WHERE event_id = $1
             """,
-            event_id, canonical.vendor_id,
+            event_id,
+            canonical.vendor_id,
         )
 
     log.info(
@@ -148,6 +161,33 @@ async def process_event(
     return outcome
 
 
+async def _upsert_canonical_event(conn: asyncpg.Connection, canonical: CanonicalEvent) -> None:
+    canonical_payload = orjson.loads(orjson.dumps(canonical.model_dump(mode="json"), default=str))
+    await conn.execute(
+        """
+        INSERT INTO canonical_events (
+            event_id, classification, vendor_id, schema_version, source, confidence, canonical
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ON CONFLICT (event_id) DO UPDATE
+              SET classification = EXCLUDED.classification,
+                  vendor_id = EXCLUDED.vendor_id,
+                  schema_version = EXCLUDED.schema_version,
+                  source = EXCLUDED.source,
+                  confidence = EXCLUDED.confidence,
+                  canonical = EXCLUDED.canonical,
+                  normalized_at = now()
+        """,
+        canonical.event_id,
+        canonical.classification.value,
+        canonical.vendor_id,
+        canonical.schema_version,
+        canonical.source.value,
+        canonical.confidence,
+        canonical_payload,
+    )
+
+
 async def _mark_review(
     pool: asyncpg.Pool,
     event_id: str,
@@ -163,7 +203,9 @@ async def _mark_review(
             VALUES ($1, $2, $3::jsonb)
             ON CONFLICT (event_id) DO NOTHING
             """,
-            event_id, reason, safe_detail,
+            event_id,
+            reason,
+            safe_detail,
         )
         await conn.execute(
             """
@@ -173,5 +215,28 @@ async def _mark_review(
                    processed_at = now()
              WHERE event_id = $1
             """,
-            event_id, reason,
+            event_id,
+            reason,
+        )
+
+
+async def _mark_pending_llm(
+    pool: asyncpg.Pool,
+    event_id: str,
+    *,
+    reason: str,
+    detail: dict[str, Any] | None,
+) -> None:
+    _ = detail  # reserved for future diagnostics persistence
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE raw_events
+               SET processing_status = 'pending_llm',
+                   processing_error = $2,
+                   processed_at = now()
+             WHERE event_id = $1
+            """,
+            event_id,
+            reason,
         )

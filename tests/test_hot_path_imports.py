@@ -20,13 +20,12 @@ RECEIVER_PATH = Path(__file__).resolve().parents[1] / "app" / "api" / "receiver.
         "import app.llm",
         "from app.domain.state_machine",
         "import app.domain.state_machine",
-        "from app.adapters.registry",   # adapter resolution is a worker concern
+        "from app.adapters.registry",  # adapter resolution is a worker concern
         "from app.workers.pipeline",
     ],
 )
 def test_receiver_does_not_import_business_modules(forbidden_import: str) -> None:
     src = RECEIVER_PATH.read_text(encoding="utf-8")
     assert forbidden_import not in src, (
-        f"Receiver hot path imports forbidden module: {forbidden_import!r}. "
-        "Move that work to the worker."
+        f"Receiver hot path imports forbidden module: {forbidden_import!r}. Move that work to the worker."
     )

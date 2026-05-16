@@ -35,11 +35,7 @@ def _resolve_db_url() -> str:
 
 
 def _resolve_redis_url() -> str:
-    return (
-        os.environ.get("TEST_REDIS_URL")
-        or os.environ.get("REDIS_URL")
-        or "redis://localhost:6379/0"
-    )
+    return os.environ.get("TEST_REDIS_URL") or os.environ.get("REDIS_URL") or "redis://localhost:6379/0"
 
 
 async def _can_connect(dsn: str) -> bool:
@@ -65,6 +61,8 @@ def pytest_collection_modifyitems(config, items):
 async def db_pool() -> AsyncIterator[asyncpg.Pool]:
     dsn = _resolve_db_url()
     if not await _can_connect(dsn):
+        if os.environ.get("REQUIRE_E2E_DB") == "1":
+            pytest.fail(f"Postgres not reachable at {dsn}; REQUIRE_E2E_DB=1 disallows skipping.")
         pytest.skip(f"Postgres not reachable at {dsn}; skipping DB e2e tests")
     # Apply migrations idempotently.
     conn = await asyncpg.connect(dsn=dsn)
@@ -125,6 +123,7 @@ async def clean_db(db_pool):
             """
             TRUNCATE TABLE
                 requires_human_review,
+                canonical_events,
                 outbox,
                 stale_event_log,
                 applied_events,

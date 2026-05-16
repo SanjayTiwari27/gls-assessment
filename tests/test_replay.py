@@ -21,7 +21,8 @@ async def _seed_and_process(pool, payloads: list[dict]) -> list[str]:
         async with pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO raw_events (event_id, payload, headers) VALUES ($1, $2::jsonb, '{}'::jsonb) ON CONFLICT DO NOTHING",
-                eid, p,
+                eid,
+                p,
             )
         event_ids.append(eid)
         await process_event(pool, eid)
@@ -39,14 +40,12 @@ async def _snapshot(pool) -> dict:
         applied = await conn.fetch(
             "SELECT entity_id, event_id, target_state FROM applied_events ORDER BY entity_id, event_id"
         )
-        outbox = await conn.fetch(
-            "SELECT event_id, kind FROM outbox ORDER BY event_id, kind"
-        )
+        outbox = await conn.fetch("SELECT event_id, kind FROM outbox ORDER BY event_id, kind")
     return {
         "shipments": [dict(r) for r in ships],
-        "invoices":  [dict(r) for r in invs],
-        "applied":   [dict(r) for r in applied],
-        "outbox":    [dict(r) for r in outbox],
+        "invoices": [dict(r) for r in invs],
+        "applied": [dict(r) for r in applied],
+        "outbox": [dict(r) for r in outbox],
     }
 
 
@@ -82,10 +81,38 @@ async def test_full_replay_produces_byte_identical_projection(clean_db, fixture_
     def _strip(rows: list[dict], keys: list[str]) -> list[dict]:
         return [{k: r[k] for k in keys} for r in rows]
 
-    assert _strip(before["shipments"], ["vendor_id", "external_id", "state", "last_applied_event_id", "last_applied_ts", "version"]) == \
-           _strip(after["shipments"],  ["vendor_id", "external_id", "state", "last_applied_event_id", "last_applied_ts", "version"])
-    assert _strip(before["invoices"],  ["vendor_id", "external_id", "state", "currency", "amount_minor", "last_applied_event_id", "last_applied_ts", "version"]) == \
-           _strip(after["invoices"],   ["vendor_id", "external_id", "state", "currency", "amount_minor", "last_applied_event_id", "last_applied_ts", "version"])
+    assert _strip(
+        before["shipments"],
+        ["vendor_id", "external_id", "state", "last_applied_event_id", "last_applied_ts", "version"],
+    ) == _strip(
+        after["shipments"],
+        ["vendor_id", "external_id", "state", "last_applied_event_id", "last_applied_ts", "version"],
+    )
+    assert _strip(
+        before["invoices"],
+        [
+            "vendor_id",
+            "external_id",
+            "state",
+            "currency",
+            "amount_minor",
+            "last_applied_event_id",
+            "last_applied_ts",
+            "version",
+        ],
+    ) == _strip(
+        after["invoices"],
+        [
+            "vendor_id",
+            "external_id",
+            "state",
+            "currency",
+            "amount_minor",
+            "last_applied_event_id",
+            "last_applied_ts",
+            "version",
+        ],
+    )
 
     assert _strip(before["outbox"], ["event_id", "kind"]) == _strip(after["outbox"], ["event_id", "kind"])
     # applied_events has entity_id which differs across truncate, but counts must match.

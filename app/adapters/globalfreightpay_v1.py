@@ -140,7 +140,9 @@ class GlobalFreightPayV1Adapter:
             except (ValueError, TypeError):
                 due_at = None
 
-        line_items = transaction.get("line_items") if isinstance(transaction.get("line_items"), list) else None
+        line_items = (
+            transaction.get("line_items") if isinstance(transaction.get("line_items"), list) else None
+        )
 
         linked_references = {
             "carrier": payload.get("carrier"),

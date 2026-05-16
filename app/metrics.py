@@ -49,7 +49,10 @@ LLM_TOKENS = Counter(
 STATE_TRANSITION_TOTAL = Counter(
     "state_transition_total",
     "Outcomes of state machine apply_event calls.",
-    labelnames=("entity_type", "outcome"),  # outcome: applied | already_applied | stale_skipped | transition_rejected
+    labelnames=(
+        "entity_type",
+        "outcome",
+    ),  # outcome: applied | already_applied | stale_skipped | transition_rejected
 )
 
 OUTBOX_DISPATCH_TOTAL = Counter(

@@ -110,12 +110,12 @@ def test_marine_traffic_advisory_classifies_unclassified(fixture_payloads):
 
 def test_registry_resolves_each_appendix_payload(fixture_payloads):
     expected = {
-        "01_maersk_in_transit":          "maersk",
-        "02_maersk_picked_up":           "maersk",
-        "03_globalfreightpay_paid":      "globalfreightpay",
-        "04_globalfreightpay_issued":    "globalfreightpay",
-        "05_one_delivered":              "ocean_network_express",
-        "06_marine_traffic_advisory":    "marine_traffic_advisory",
+        "01_maersk_in_transit": "maersk",
+        "02_maersk_picked_up": "maersk",
+        "03_globalfreightpay_paid": "globalfreightpay",
+        "04_globalfreightpay_issued": "globalfreightpay",
+        "05_one_delivered": "ocean_network_express",
+        "06_marine_traffic_advisory": "marine_traffic_advisory",
     }
     registry = AdapterRegistry()
     for name, vendor in expected.items():

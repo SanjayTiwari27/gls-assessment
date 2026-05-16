@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api.receiver import router as receiver_router
@@ -52,11 +52,15 @@ async def healthz() -> dict[str, str]:
 
 
 @app.get("/readyz", tags=["health"])
-async def readyz() -> dict[str, object]:
+async def readyz() -> JSONResponse:
     db = await db_healthcheck()
     queue = await queue_healthcheck()
     ready = bool(db.get("ok") and queue.get("ok"))
-    return {"ready": ready, "db": db, "queue": queue}
+    status_code = 200 if ready else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={"ready": ready, "db": db, "queue": queue},
+    )
 
 
 @app.get("/metrics", tags=["health"], include_in_schema=False)

@@ -17,13 +17,15 @@ moves to the worker.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import time
 from typing import Any
 
 import orjson
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import get_pool
 from app.hashing import compute_event_id
 from app.logging import get_logger, new_trace_id, set_trace_id
@@ -100,6 +102,12 @@ async def _ingest(
     )
 
     event_id = compute_event_id(payload, vendor_event_id)
+    signature_verified = _verify_signature(
+        raw=raw,
+        request=request,
+        vendor_hint=vendor_hint,
+        settings=settings,
+    )
 
     headers = {
         k.lower(): v
@@ -111,8 +119,8 @@ async def _ingest(
     async with pool.acquire() as conn:
         inserted = await conn.fetchval(
             """
-            INSERT INTO raw_events (event_id, vendor_id, payload, headers, received_at, processing_status)
-            VALUES ($1, $2, $3::jsonb, $4::jsonb, now(), 'queued')
+            INSERT INTO raw_events (event_id, vendor_id, payload, headers, signature_verified, received_at, processing_status)
+            VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, now(), 'queued')
             ON CONFLICT (event_id) DO NOTHING
             RETURNING event_id
             """,
@@ -120,6 +128,7 @@ async def _ingest(
             vendor_hint,
             payload,
             headers,
+            signature_verified,
         )
 
     deduplicated = inserted is None
@@ -146,3 +155,34 @@ def _safe_str(value: Any) -> str | None:
     if isinstance(value, (str, int)):
         return str(value)
     return None
+
+
+def _verify_signature(
+    *,
+    raw: bytes,
+    request: Request,
+    vendor_hint: str | None,
+    settings: Settings,
+) -> bool:
+    if not vendor_hint:
+        return False
+
+    secret = settings.webhook_vendor_secrets.get(vendor_hint)
+    if not secret:
+        return False
+
+    supplied = request.headers.get(settings.webhook_signature_header)
+    if not supplied:
+        if settings.webhook_signature_enforce:
+            raise HTTPException(status_code=401, detail="missing signature")
+        return False
+
+    supplied = supplied.strip()
+    if supplied.lower().startswith("sha256="):
+        supplied = supplied[7:]
+
+    expected = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    ok = hmac.compare_digest(supplied.lower(), expected.lower())
+    if not ok and settings.webhook_signature_enforce:
+        raise HTTPException(status_code=401, detail="invalid signature")
+    return ok

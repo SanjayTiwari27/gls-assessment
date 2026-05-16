@@ -44,9 +44,17 @@ def compute_event_id(payload: Any, vendor_event_id: str | None = None) -> str:
     return sha256_hex(*parts)
 
 
-def llm_cache_key(prompt_version: str, payload: Any, target_schema_version: str) -> str:
-    return sha256_hex(
+def llm_cache_key(
+    prompt_version: str,
+    payload: Any,
+    target_schema_version: str,
+    vendor_scope: str | None = None,
+) -> str:
+    parts = [
         prompt_version.encode("utf-8"),
         canonical_json(payload),
         target_schema_version.encode("utf-8"),
-    )
+    ]
+    if vendor_scope:
+        parts.append(vendor_scope.encode("utf-8"))
+    return sha256_hex(*parts)
