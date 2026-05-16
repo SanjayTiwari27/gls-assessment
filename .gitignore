@@ -25,3 +25,6 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+
+# Cursor agent context (skills, plans, transcripts) — local-only, not part of the deliverable.
+.cursor/
