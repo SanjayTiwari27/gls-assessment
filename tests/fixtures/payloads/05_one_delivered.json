@@ -1,0 +1,13 @@
+{
+  "carrier": "Ocean Network Express",
+  "carrier_scac": "ONEY",
+  "event_id": "ONE-2026-04-28-114",
+  "house_bl": "ONEYJKTHKG2604113",
+  "master_bl": "ONEYMBLHKG260499",
+  "container_no": "TLLU2890442",
+  "consignee": "ACME Manufacturing PT.",
+  "milestone_text": "Cargo released to consignee at consignee facility — empty container returned to depot",
+  "milestone_local_time": "28/04/2026 09:42 WIB",
+  "port_of_discharge": "IDJKT",
+  "delivery_order_no": "DO-IDJKT-26044881"
+}

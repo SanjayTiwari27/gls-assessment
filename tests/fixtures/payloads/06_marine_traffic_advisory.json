@@ -1,0 +1,10 @@
+{
+  "issuer": "marine-traffic-advisory",
+  "advisory_id": "MTA-2026-04-26-EU-007",
+  "severity": "AMBER",
+  "issued_at": "2026-04-26T06:00:00Z",
+  "subject": "Ongoing congestion at Port of Antwerp-Bruges",
+  "body": "Vessel waiting times at Antwerp-Bruges berths have increased to 4-6 days due to labour action by terminal operators. Carriers are advised to consider rerouting via Rotterdam or Zeebrugge. ETAs across all services calling at Antwerp-Bruges should be assumed delayed until further notice.",
+  "affected_services": ["AE7", "FAL3", "Mediterranean Bridge"],
+  "expires_at": "2026-05-03T00:00:00Z"
+}

@@ -1,0 +1,14 @@
+{
+  "source": "globalfreightpay.api",
+  "channel": "carrier_billing",
+  "doc_ref": "GFP-INV-2026-Q2-08821",
+  "carrier": "Hapag-Lloyd AG",
+  "linked_bl": "HLCU2604OCEAN221",
+  "transaction": {
+    "kind": "settled in full",
+    "settled_at": "2026-04-22 18:47:11+02:00",
+    "amount": "EUR 24.350,75",
+    "remitter": "ACME Logistics GmbH",
+    "memo": "Ocean freight + THC + BAF, Shanghai → Hamburg, container HLBU4490221"
+  }
+}

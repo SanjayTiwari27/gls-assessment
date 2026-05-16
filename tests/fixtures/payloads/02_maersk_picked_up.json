@@ -1,0 +1,10 @@
+{
+  "carrier_scac": "MAEU",
+  "event_msg_id": "MAEU-EVT-2026-04-19-0042",
+  "transport_doc": { "type": "MBL", "number": "MAEU240498712" },
+  "container": "MSKU7748112",
+  "milestone": "Empty container released to shipper; full container received at origin terminal",
+  "milestone_at": "2026-04-19T11:15:00+08:00",
+  "port": { "code": "CNSHA", "name": "Shanghai" },
+  "shipper_ref": "ACME-IND-PO-2026-9921"
+}

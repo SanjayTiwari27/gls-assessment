@@ -1,0 +1,79 @@
+[project]
+name = "gls-webhook-ingestion"
+version = "0.1.0"
+description = "AI-powered webhook ingestion and normalization service for vendor logistics/invoice events."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "GLS Assessment" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "asyncpg>=0.29",
+    "arq>=0.26",
+    "redis>=5.0",
+    "structlog>=24.4",
+    "httpx>=0.27",
+    "jsonschema>=4.23",
+    "python-dateutil>=2.9",
+    "typer>=0.13",
+    "prometheus-client>=0.21",
+    "orjson>=3.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "dirty-equals>=0.8",
+    "httpx>=0.27",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "asgi-lifespan>=2.1",
+]
+
+[project.scripts]
+gls-replay = "app.tools.replay:cli"
+gls-seed = "app.tools.seed:cli"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "e2e: tests that need a live Postgres (and sometimes Redis)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "TID"]
+ignore = [
+    "E501",        # line length is enforced by formatter, not the linter
+    "B008",        # typer + FastAPI rely on call-in-default for DI / CLI args
+    "ASYNC109",    # we accept timeout params on async helpers; clearer than asyncio.timeout in some places
+    "SIM103",      # explicit if-return reads better than fold for fingerprint matchers
+    "SIM105",      # contextlib.suppress hides intent for very small try/except/pass blocks
+    "SIM108",      # ternaries hurt readability for non-trivial branches
+    "UP042",       # (str, Enum) is intentional: pydantic v2 + serialization compatibility
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true
