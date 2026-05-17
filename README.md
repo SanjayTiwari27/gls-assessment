@@ -1,6 +1,16 @@
 # AI Webhook Ingestion & Normalization Service
 
-## Design
+A self-learning webhook ingestion service that accepts arbitrary vendor payloads, classifies them (shipment/invoice/unclassified), normalizes them into a strict canonical schema, and projects them onto entity state machines — all while handling duplicates, out-of-order delivery, retries, and replay.
+
+The core insight: **LLMs are expensive and non-deterministic, so use them once to teach the system a new vendor's payload shape, then handle all future events from that vendor deterministically at zero cost.** The system starts cold (every new shape hits the LLM) and converges to near-zero LLM usage as vendor shapes stabilize. A vendor sending 10,000 events/day with a stable schema pays for 1 LLM call ever.
+
+The architecture separates concerns into two planes:
+- **Plane 1 (Ingestion):** Synchronous, sub-100ms. Accepts the webhook, content-addresses it for deduplication, persists it, enqueues a job, returns 202. Zero business logic on the hot path.
+- **Plane 2 (Processing):** Async worker. Fingerprints the payload shape, looks up a learned schema (Path A, deterministic) or falls back to LLM extraction + Schema Discovery (Path B, learns once). The extracted canonical event is normalized and applied to a state machine inside a single Postgres transaction with full idempotency and out-of-order protection.
+
+---
+
+## Design Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
