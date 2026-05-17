@@ -10,7 +10,7 @@ Vendors push webhooks of arbitrary shape — Maersk shipment milestones, GlobalF
 - project it onto entity state machines that survive duplicates, retries, out-of-order delivery, and replay,
 - be **deterministic despite using an LLM** — same payload → same canonical event, every time.
 
-LLMs are treated like any expensive non-deterministic external API: a fallback, gated by cache + budget + JSON-schema validation + audit, never the default. The provider is pluggable; an offline deterministic stub is the default so the system runs end-to-end with no API key.
+LLMs are treated like any expensive non-deterministic external API: a fallback for unknown vendor shapes, gated by cache + budget + JSON-schema validation + audit. Known vendor shapes are handled deterministically via DB-stored schemas (zero LLM cost). Unknown shapes trigger a single LLM call that teaches the system the new shape — all future events from the same vendor+shape are then handled deterministically.
 
 ---
 
@@ -49,7 +49,7 @@ make seed      # POST the 6 appendix payloads
 make test      # full suite (e2e tests skip if DB is unreachable)
 ```
 
-Default `LLM_PROVIDER=stub` requires no API key. Set `LLM_PROVIDER=openai` + `OPENAI_API_KEY` in `.env` to flip to OpenAI Structured Outputs.
+Set `OPENAI_API_KEY` in `.env` for the LLM fallback path (unknown vendor shapes). Known shapes are handled deterministically via `vendor_schemas` — no LLM calls required.
 
 ---
 
@@ -79,7 +79,7 @@ Plus structured JSON logs with a `trace_id` propagated `receiver → queue → w
 
 **LLM gated by cache, budget, schema, audit.** [`app/llm/fallback.py`](app/llm/fallback.py): cache lookup before any network call (cache hits still write an audit row); per-vendor and global daily budget guard that raises `BudgetExceeded` so events are marked `pending_llm`, not silently dropped; `jsonschema` validation against [`v1_target_schema.json`](app/llm/schemas/v1_target_schema.json) with **exactly one** self-correcting retry — then `requires_human_review`, no partial writes; temperature 0; one `llm_audit` row per call recording tokens, latency, cost, decision. Prompt and schema are versioned so a bump invalidates cache cleanly.
 
-**Pluggable provider, offline default.** `LLMProvider` is a Protocol. `StubLLM` is a deterministic key-free implementation that uses the same fingerprints the deterministic adapters use plus broader keyword classification, so the system runs end-to-end with no API key. `OpenAILLM` wraps chat-completions with `response_format=json_schema` and reports real token cost. One env var swaps them.
+**Pluggable provider.** `LLMProvider` is a Protocol. `OpenAILLM` wraps chat-completions with `response_format=json_object` and reports real token cost. The LLM is only invoked for unknown vendor shapes (Path B) — once the schema is learned, all future events from that shape are processed deterministically (Path A) with zero LLM cost.
 
 **State machine: idempotency + out-of-order, both at write time.** [`app/domain/state_machine.py`](app/domain/state_machine.py) inside one transaction: `SELECT ... FOR UPDATE` on the projection row, `INSERT INTO applied_events ON CONFLICT (entity_id, event_id) DO NOTHING RETURNING` (returns nothing on duplicate → `already_applied`), validate against `ALLOWED_TRANSITIONS`, compare `incoming.event_timestamp` vs current `state_timestamp` (older → `stale_event_log`, never walks backward), update projection, commit. The `applied_events` PK is the hard guarantee that no event moves state twice. Initial state is `None`, intentionally permissive (a backfilled vendor's first event might be `IN_TRANSIT`); the timestamp guard prevents a later-arriving older event from undoing it.
 

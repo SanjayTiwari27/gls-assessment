@@ -48,8 +48,8 @@ async def _snapshot(pool) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_full_replay_produces_byte_identical_projection(clean_db, fixture_payloads):
-    pool = clean_db
+async def test_full_replay_produces_byte_identical_projection(seeded_db, fixture_payloads):
+    pool = seeded_db
     reset_pipeline_singletons()
 
     ordered = [

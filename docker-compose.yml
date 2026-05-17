@@ -48,7 +48,7 @@ services:
     environment:
       DATABASE_URL: postgresql://gls:gls@postgres:5432/gls
       REDIS_URL: redis://redis:6379/0
-      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
@@ -67,7 +67,7 @@ services:
     environment:
       DATABASE_URL: postgresql://gls:gls@postgres:5432/gls
       REDIS_URL: redis://redis:6379/0
-      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: ["python", "-m", "arq", "app.workers.processor.WorkerSettings"]
