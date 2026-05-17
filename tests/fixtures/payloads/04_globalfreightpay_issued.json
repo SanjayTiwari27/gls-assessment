@@ -1,0 +1,18 @@
+{
+  "source": "globalfreightpay.api",
+  "channel": "carrier_billing",
+  "doc_ref": "GFP-INV-2026-Q2-08821",
+  "carrier": "Hapag-Lloyd AG",
+  "linked_bl": "HLCU2604OCEAN221",
+  "transaction": {
+    "kind": "freight invoice raised",
+    "issued_at": "2026-04-15T09:00:00+02:00",
+    "amount": "EUR 24.350,75",
+    "due_at": "2026-05-15T00:00:00+02:00",
+    "line_items": [
+      { "desc": "Ocean freight Shanghai → Hamburg", "amt": "EUR 21.000,00" },
+      { "desc": "Terminal handling charges (THC)", "amt": "EUR 1.850,75" },
+      { "desc": "Bunker adjustment factor (BAF)", "amt": "EUR 1.500,00" }
+    ]
+  }
+}

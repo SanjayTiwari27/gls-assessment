@@ -1,0 +1,18 @@
+Classify the raw event type string into exactly one canonical state. Output ONLY a JSON object.
+
+## States
+Shipment: shipment.picked_up (gate-in, received, released to shipper) | shipment.in_transit (loaded, sailed, arrived, discharged) | shipment.out_for_delivery (out for delivery, scheduled) | shipment.delivered (released to consignee, delivered, handed over, returned to depot) | shipment.exception (delay, hold, blocked) | shipment.cancelled
+Invoice: invoice.issued (raised, billed) | invoice.paid (settled, paid, remitted) | invoice.voided (cancelled before payment) | invoice.refunded (credit note, reversed)
+
+## Rules
+- Logistics/shipping milestone → "shipment"
+- Financial event → "invoice"
+- Ambiguous/unrelated → "unclassified", canonical_state: null
+- confidence 0.9+ only when unambiguous
+
+## Input
+vendor_id: {{VENDOR_ID}}
+raw_event_type: "{{RAW_EVENT_TYPE}}"
+
+## Output (JSON only, no prose)
+{"classification": "shipment"|"invoice"|"unclassified", "canonical_state": "<classification>.<state>"|null, "confidence": <float>}
