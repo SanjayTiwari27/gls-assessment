@@ -131,11 +131,69 @@ async def clean_db(db_pool):
                 entities,
                 llm_audit,
                 llm_cache,
+                vendor_event_type_map,
+                vendor_schemas,
                 raw_events
             CASCADE
             """
         )
     yield db_pool
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def seeded_db(clean_db):
+    """clean_db with vendor_schemas and event_type_map pre-seeded for the 4 test vendors."""
+    from app.adapters.fingerprint import structural_fingerprint
+    from tests.vendor_schemas import (
+        EVENT_TYPE_MAPPINGS,
+        GLOBALFREIGHTPAY_SCHEMA_DOC,
+        MAERSK_SCHEMA_DOC,
+        MARINE_TRAFFIC_SCHEMA_DOC,
+        ONE_SCHEMA_DOC,
+    )
+
+    pool = clean_db
+
+    # Compute fingerprints from actual fixture payloads
+    fixtures = {}
+    for f in sorted(FIXTURES_DIR.glob("*.json")):
+        fixtures[f.stem] = orjson.loads(f.read_bytes())
+
+    schemas_to_seed = [
+        ("maersk", fixtures["01_maersk_in_transit"], MAERSK_SCHEMA_DOC),
+        ("ocean_network_express", fixtures["05_one_delivered"], ONE_SCHEMA_DOC),
+        ("globalfreightpay", fixtures["03_globalfreightpay_paid"], GLOBALFREIGHTPAY_SCHEMA_DOC),
+        ("marine_traffic_advisory", fixtures["06_marine_traffic_advisory"], MARINE_TRAFFIC_SCHEMA_DOC),
+    ]
+
+    async with pool.acquire() as conn:
+        for vendor_id, sample_payload, schema_doc in schemas_to_seed:
+            fp = structural_fingerprint(sample_payload)
+            await conn.execute(
+                """
+                INSERT INTO vendor_schemas (vendor_id, structural_fingerprint, schema_doc, status, created_by)
+                VALUES ($1, $2, $3::jsonb, 'active', 'human')
+                ON CONFLICT (vendor_id, structural_fingerprint, schema_version) DO NOTHING
+                """,
+                vendor_id,
+                fp,
+                schema_doc,
+            )
+
+        for vendor_id, raw_event_type, classification, canonical_state in EVENT_TYPE_MAPPINGS:
+            await conn.execute(
+                """
+                INSERT INTO vendor_event_type_map (vendor_id, raw_event_type, classification, canonical_state, confidence, source)
+                VALUES ($1, $2, $3, $4, 0.95, 'human')
+                ON CONFLICT (vendor_id, raw_event_type) DO NOTHING
+                """,
+                vendor_id,
+                raw_event_type,
+                classification,
+                canonical_state,
+            )
+
+    yield pool
 
 
 @pytest.fixture

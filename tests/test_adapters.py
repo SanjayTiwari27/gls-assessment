@@ -1,32 +1,42 @@
-"""Pure unit tests for vendor adapters using the appendix payload fixtures."""
+"""Unit tests for the schema-driven adapter using appendix payload fixtures.
+
+These tests exercise the same extractions the old hardcoded adapters did, but
+via schema_doc declarations + SchemaDrivenAdapter rather than per-vendor Python
+classes. Tests are pure (no DB required) — schema_docs are imported directly.
+"""
 
 from datetime import UTC, datetime
 
-from app.adapters.globalfreightpay_v1 import GlobalFreightPayV1Adapter
-from app.adapters.maersk_v1 import MaerskV1Adapter
-from app.adapters.marine_traffic_v1 import MarineTrafficV1Adapter
-from app.adapters.one_v1 import OneV1Adapter
-from app.adapters.registry import AdapterRegistry
-from app.adapters.registry import registry as default_registry
+from app.adapters.schema_driven import SchemaDrivenAdapter
 from app.domain.canonical import (
     Classification,
     InvoiceEventType,
     ShipmentEventType,
     Source,
 )
+from tests.vendor_schemas import (
+    GLOBALFREIGHTPAY_SCHEMA_DOC,
+    MAERSK_SCHEMA_DOC,
+    MARINE_TRAFFIC_SCHEMA_DOC,
+    ONE_SCHEMA_DOC,
+)
 
 EVENT_ID = "test-event-id"
+adapter = SchemaDrivenAdapter()
 
 
 def test_maersk_in_transit(fixture_payloads):
     payload = fixture_payloads["01_maersk_in_transit"]
-    adapter = MaerskV1Adapter()
-    assert adapter.matches(payload, {})
-
-    result = adapter.normalize(payload, {}, EVENT_ID)
-    assert result.status == "ok"
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="maersk",
+        schema_doc=MAERSK_SCHEMA_DOC,
+        canonical_state="shipment.in_transit",
+    )
+    assert result.success
     ev = result.canonical_event
-    assert ev is not None
     assert ev.classification == Classification.SHIPMENT
     assert ev.event_type == ShipmentEventType.IN_TRANSIT
     assert ev.entity_external_id == "MAEU240498712:MSKU7748112"
@@ -40,27 +50,45 @@ def test_maersk_in_transit(fixture_payloads):
 
 def test_maersk_picked_up(fixture_payloads):
     payload = fixture_payloads["02_maersk_picked_up"]
-    result = MaerskV1Adapter().normalize(payload, {}, EVENT_ID)
-    assert result.status == "ok"
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="maersk",
+        schema_doc=MAERSK_SCHEMA_DOC,
+        canonical_state="shipment.picked_up",
+    )
+    assert result.success
     ev = result.canonical_event
     assert ev.event_type == ShipmentEventType.PICKED_UP
     assert ev.entity_external_id == "MAEU240498712:MSKU7748112"
-    # Both Maersk fixtures land on the same shipment entity.
     assert ev.event_timestamp < datetime(2026, 4, 21, tzinfo=UTC)
 
 
-def test_maersk_does_not_match_other_carriers():
-    assert not MaerskV1Adapter().matches({"carrier_scac": "ONEY"}, {})
-    assert not MaerskV1Adapter().matches({}, {})
+def test_maersk_extracts_raw_event_type(fixture_payloads):
+    payload = fixture_payloads["01_maersk_in_transit"]
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="maersk",
+        schema_doc=MAERSK_SCHEMA_DOC,
+        canonical_state="shipment.in_transit",
+    )
+    assert result.raw_event_type == "Loaded onboard and sailed"
 
 
 def test_one_delivered(fixture_payloads):
     payload = fixture_payloads["05_one_delivered"]
-    adapter = OneV1Adapter()
-    assert adapter.matches(payload, {})
-
-    result = adapter.normalize(payload, {}, EVENT_ID)
-    assert result.status == "ok"
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="ocean_network_express",
+        schema_doc=ONE_SCHEMA_DOC,
+        canonical_state="shipment.delivered",
+    )
+    assert result.success
     ev = result.canonical_event
     assert ev.event_type == ShipmentEventType.DELIVERED
     assert ev.entity_external_id == "ONEYJKTHKG2604113:TLLU2890442"
@@ -70,11 +98,15 @@ def test_one_delivered(fixture_payloads):
 
 def test_globalfreightpay_paid(fixture_payloads):
     payload = fixture_payloads["03_globalfreightpay_paid"]
-    adapter = GlobalFreightPayV1Adapter()
-    assert adapter.matches(payload, {})
-
-    result = adapter.normalize(payload, {}, EVENT_ID)
-    assert result.status == "ok"
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="globalfreightpay",
+        schema_doc=GLOBALFREIGHTPAY_SCHEMA_DOC,
+        canonical_state="invoice.paid",
+    )
+    assert result.success
     ev = result.canonical_event
     assert ev.classification == Classification.INVOICE
     assert ev.event_type == InvoiceEventType.PAID
@@ -87,8 +119,15 @@ def test_globalfreightpay_paid(fixture_payloads):
 
 def test_globalfreightpay_issued(fixture_payloads):
     payload = fixture_payloads["04_globalfreightpay_issued"]
-    result = GlobalFreightPayV1Adapter().normalize(payload, {}, EVENT_ID)
-    assert result.status == "ok"
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="globalfreightpay",
+        schema_doc=GLOBALFREIGHTPAY_SCHEMA_DOC,
+        canonical_state="invoice.issued",
+    )
+    assert result.success
     ev = result.canonical_event
     assert ev.event_type == InvoiceEventType.ISSUED
     assert ev.entity_external_id == "GFP-INV-2026-Q2-08821"
@@ -98,57 +137,50 @@ def test_globalfreightpay_issued(fixture_payloads):
 
 def test_marine_traffic_advisory_classifies_unclassified(fixture_payloads):
     payload = fixture_payloads["06_marine_traffic_advisory"]
-    adapter = MarineTrafficV1Adapter()
-    assert adapter.matches(payload, {})
-
-    result = adapter.normalize(payload, {}, EVENT_ID)
-    assert result.status == "ok"
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="marine_traffic_advisory",
+        schema_doc=MARINE_TRAFFIC_SCHEMA_DOC,
+        canonical_state=None,
+    )
+    assert result.success
     ev = result.canonical_event
     assert ev.classification == Classification.UNCLASSIFIED
     assert ev.summary and "Antwerp" in ev.summary
 
 
-def test_registry_resolves_each_appendix_payload(fixture_payloads):
-    expected = {
-        "01_maersk_in_transit": "maersk",
-        "02_maersk_picked_up": "maersk",
-        "03_globalfreightpay_paid": "globalfreightpay",
-        "04_globalfreightpay_issued": "globalfreightpay",
-        "05_one_delivered": "ocean_network_express",
-        "06_marine_traffic_advisory": "marine_traffic_advisory",
-    }
-    registry = AdapterRegistry()
-    for name, vendor in expected.items():
-        adapter = registry.resolve(fixture_payloads[name], {})
-        assert adapter is not None, f"no adapter matched {name}"
-        assert adapter.vendor_id == vendor
-
-
-def test_registry_returns_none_for_unknown_payload():
-    assert default_registry.resolve({"random": "shape"}, {}) is None
-
-
-def test_adapter_falls_through_to_llm_when_milestone_missing():
+def test_schema_extraction_fails_gracefully_on_missing_fields():
+    """When required paths don't resolve, extraction fails cleanly with details."""
     payload = {
         "carrier_scac": "MAEU",
         "transport_doc": {"number": "MAEU1"},
         "container": "MSKU1",
-        "milestone_at": "2026-04-21T22:47:00+08:00",
-        # milestone is missing
+        # milestone_at is missing
     }
-    result = MaerskV1Adapter().normalize(payload, {}, EVENT_ID)
-    assert result.status == "needs_llm"
-    assert "milestone" in result.missing_fields
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="maersk",
+        schema_doc=MAERSK_SCHEMA_DOC,
+        canonical_state="shipment.in_transit",
+    )
+    assert not result.success
+    assert "event_timestamp" in result.missing_paths
 
 
-def test_adapter_falls_through_to_llm_when_milestone_unrecognized():
-    payload = {
-        "carrier_scac": "MAEU",
-        "transport_doc": {"number": "MAEU1"},
-        "container": "MSKU1",
-        "milestone": "Some weird internal vendor jargon nobody mapped",
-        "milestone_at": "2026-04-21T22:47:00+08:00",
-    }
-    result = MaerskV1Adapter().normalize(payload, {}, EVENT_ID)
-    assert result.status == "needs_llm"
-    assert "event_type" in result.missing_fields
+def test_schema_returns_raw_event_type_even_on_failure(fixture_payloads):
+    """When canonical_state is None, extraction fails but returns raw_event_type for resolution."""
+    payload = fixture_payloads["01_maersk_in_transit"]
+    result = adapter.extract(
+        payload=payload,
+        headers={},
+        event_id=EVENT_ID,
+        vendor_id="maersk",
+        schema_doc=MAERSK_SCHEMA_DOC,
+        canonical_state=None,
+    )
+    assert not result.success
+    assert result.raw_event_type == "Loaded onboard and sailed"

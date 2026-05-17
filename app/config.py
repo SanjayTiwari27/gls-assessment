@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # LLM
-    llm_provider: Literal["stub", "openai"] = "stub"
+    llm_provider: Literal["openai"] = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     llm_request_timeout_s: float = 20.0

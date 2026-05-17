@@ -34,8 +34,8 @@ async def _ingest_fixture(pool, payload: dict, *, vendor_hint: str | None = None
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_against_appendix(clean_db, fixture_payloads):
-    pool = clean_db
+async def test_full_pipeline_against_appendix(seeded_db, fixture_payloads):
+    pool = seeded_db
     reset_pipeline_singletons()
 
     # Order chosen to exercise both forward progression and out-of-order:
@@ -87,8 +87,8 @@ async def test_full_pipeline_against_appendix(clean_db, fixture_payloads):
 
 
 @pytest.mark.asyncio
-async def test_replay_produces_identical_projections(clean_db, fixture_payloads):
-    pool = clean_db
+async def test_replay_produces_identical_projections(seeded_db, fixture_payloads):
+    pool = seeded_db
     reset_pipeline_singletons()
 
     # First pass.
@@ -138,8 +138,8 @@ async def test_replay_produces_identical_projections(clean_db, fixture_payloads)
 
 
 @pytest.mark.asyncio
-async def test_duplicate_processing_is_noop(clean_db, fixture_payloads):
-    pool = clean_db
+async def test_duplicate_processing_is_noop(seeded_db, fixture_payloads):
+    pool = seeded_db
     reset_pipeline_singletons()
     payload = fixture_payloads["01_maersk_in_transit"]
     eid = await _ingest_fixture(pool, payload)
@@ -157,12 +157,12 @@ async def test_duplicate_processing_is_noop(clean_db, fixture_payloads):
 
 
 @pytest.mark.asyncio
-async def test_unsupported_payload_routes_to_human_review(clean_db, monkeypatch):
+async def test_unsupported_payload_routes_to_human_review(seeded_db, monkeypatch):
     """Fully unrecognized payloads still get classified — by the stub LLM
     they go to 'unclassified', not to human review. Human review is reserved
     for payloads where even the LLM cannot produce schema-valid output."""
 
-    pool = clean_db
+    pool = seeded_db
     reset_pipeline_singletons()
 
     # Force the universal adapter to fail by stubbing the fallback.
@@ -195,8 +195,8 @@ async def test_unsupported_payload_routes_to_human_review(clean_db, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_budget_exhausted_payload_is_marked_pending_llm(clean_db, monkeypatch):
-    pool = clean_db
+async def test_budget_exhausted_payload_is_marked_pending_llm(seeded_db, monkeypatch):
+    pool = seeded_db
     reset_pipeline_singletons()
 
     from app.adapters.base import AdapterResult
