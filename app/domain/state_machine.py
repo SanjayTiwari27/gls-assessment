@@ -9,7 +9,7 @@ Apply semantics:
   - Idempotent. ``applied_events(entity_id, event_id)`` is the hard guarantee.
   - Time-aware. Events older than ``last_applied_ts`` are recorded but never
     move state.
-  - Transactional. Lock + check + write + outbox happen in one DB transaction.
+  - Transactional. Lock + check + write happen in one DB transaction.
   - Replay-safe. Running the same sequence twice produces the same projection.
 """
 
@@ -166,18 +166,6 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
             ev.location.model_dump() if ev.location else None,
         )
         if inserted is not None:
-            await _write_outbox(
-                conn,
-                ev.event_id,
-                f"shipment.transitioned_to.{target_state.value}",
-                {
-                    "vendor_id": ev.vendor_id,
-                    "external_id": ev.entity_external_id,
-                    "from_state": None,
-                    "to_state": target_state.value,
-                    "event_timestamp": ev.event_timestamp.isoformat(),
-                },
-            )
             return "applied_initial"
 
         existing = await conn.fetchrow(
@@ -217,7 +205,7 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
             )
             return "transition_rejected"
 
-        # No-op transition (target_state == current_state): record but skip outbox.
+        # No-op transition (target_state == current_state): record timestamp / refs only.
         if target_state == current_state:
             await conn.execute(
                 """
@@ -256,18 +244,6 @@ async def _apply_shipment(conn: asyncpg.Connection, ev: CanonicalShipmentEvent) 
             ev.location.model_dump() if ev.location else None,
             entity_id,
             existing["version"],
-        )
-        await _write_outbox(
-            conn,
-            ev.event_id,
-            f"shipment.transitioned_to.{target_state.value}",
-            {
-                "vendor_id": ev.vendor_id,
-                "external_id": ev.entity_external_id,
-                "from_state": current_state.value,
-                "to_state": target_state.value,
-                "event_timestamp": ev.event_timestamp.isoformat(),
-            },
         )
         return "applied"
 
@@ -319,20 +295,6 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
             ev.linked_references or {},
         )
         if inserted is not None:
-            await _write_outbox(
-                conn,
-                ev.event_id,
-                f"invoice.transitioned_to.{target_state.value}",
-                {
-                    "vendor_id": ev.vendor_id,
-                    "external_id": ev.entity_external_id,
-                    "from_state": None,
-                    "to_state": target_state.value,
-                    "currency": currency,
-                    "amount_minor": amount_minor,
-                    "event_timestamp": ev.event_timestamp.isoformat(),
-                },
-            )
             return "applied_initial"
 
         existing = await conn.fetchrow(
@@ -415,20 +377,6 @@ async def _apply_invoice(conn: asyncpg.Connection, ev: CanonicalInvoiceEvent) ->
             entity_id,
             existing["version"],
         )
-        await _write_outbox(
-            conn,
-            ev.event_id,
-            f"invoice.transitioned_to.{target_state.value}",
-            {
-                "vendor_id": ev.vendor_id,
-                "external_id": ev.entity_external_id,
-                "from_state": current_state.value,
-                "to_state": target_state.value,
-                "currency": currency or existing["currency"],
-                "amount_minor": amount_minor or existing["amount_minor"],
-                "event_timestamp": ev.event_timestamp.isoformat(),
-            },
-        )
         return "applied"
 
 
@@ -494,17 +442,4 @@ async def _log_stale(
         event_id,
         reason,
         detail or {},
-    )
-
-
-async def _write_outbox(conn: asyncpg.Connection, event_id: str, kind: str, payload: dict) -> None:
-    await conn.execute(
-        """
-        INSERT INTO outbox (event_id, kind, payload, status)
-        VALUES ($1, $2, $3::jsonb, 'pending')
-        ON CONFLICT (event_id, kind) DO NOTHING
-        """,
-        event_id,
-        kind,
-        payload,
     )

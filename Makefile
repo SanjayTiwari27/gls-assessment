@@ -1,4 +1,4 @@
-.PHONY: help install dev up down logs migrate seed test test-unit test-e2e replay api worker dispatcher fmt lint typecheck clean
+.PHONY: help install dev up down logs migrate seed test test-unit test-e2e replay api worker fmt lint typecheck clean
 
 PY ?= python
 PIP ?= pip
@@ -7,7 +7,7 @@ COMPOSE ?= docker compose
 help:
 	@echo "Common targets:"
 	@echo "  install       - install runtime + dev deps into current env"
-	@echo "  up            - bring up the full stack (postgres, redis, api, worker, dispatcher)"
+	@echo "  up            - bring up the full stack (postgres, redis, api, worker)"
 	@echo "  down          - tear down the full stack"
 	@echo "  logs          - tail compose logs"
 	@echo "  migrate       - apply database migrations"
@@ -18,7 +18,6 @@ help:
 	@echo "  replay        - run the replay CLI (pass ARGS=...)"
 	@echo "  api           - run the API locally (requires postgres+redis env vars)"
 	@echo "  worker        - run the worker locally"
-	@echo "  dispatcher    - run the outbox dispatcher locally"
 	@echo "  fmt / lint    - ruff format / lint"
 	@echo "  typecheck     - mypy"
 
@@ -57,9 +56,6 @@ api:
 
 worker:
 	$(PY) -m arq app.workers.processor.WorkerSettings
-
-dispatcher:
-	$(PY) -m app.workers.outbox_dispatcher
 
 fmt:
 	ruff format app tests

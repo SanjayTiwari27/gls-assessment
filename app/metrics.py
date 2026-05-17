@@ -54,9 +54,3 @@ STATE_TRANSITION_TOTAL = Counter(
         "outcome",
     ),  # outcome: applied | already_applied | stale_skipped | transition_rejected
 )
-
-OUTBOX_DISPATCH_TOTAL = Counter(
-    "outbox_dispatch_total",
-    "Outbox dispatcher delivery outcomes.",
-    labelnames=("kind", "outcome"),  # outcome: delivered | retry | dlq
-)

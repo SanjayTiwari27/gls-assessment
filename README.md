@@ -33,11 +33,8 @@ flowchart LR
   LLM --> Canonical
   Canonical --> StateMachine["apply_event TX"]
   StateMachine --> Applied[(applied_events)]
-  StateMachine --> Projections[(shipments / invoices)]
+  StateMachine --> Projections[(shipments / invoices / canonical_events)]
   StateMachine --> Stale[(stale_event_log)]
-  StateMachine --> Outbox[(outbox)]
-  Outbox --> Dispatcher[Outbox Dispatcher]
-  Dispatcher --> Downstream[Downstream sinks]
 ```
 
 The hot path (HTTP receiver) does only: parse JSON → `sha256` → `INSERT raw_events ON CONFLICT DO NOTHING` → enqueue → `202`. No LLM, no joins, no business logic. Everything else — classification, normalization, state transitions, side-effects — runs in workers consuming a Redis queue. State is a pure projection of the immutable `raw_events` log and is rebuildable via the replay CLI.
@@ -47,7 +44,7 @@ The hot path (HTTP receiver) does only: parse JSON → `sha256` → `INSERT raw_
 **Run it:**
 
 ```bash
-make up        # postgres, redis, api, worker, dispatcher; auto-migrates
+make up        # postgres, redis, api, worker; auto-migrates
 make seed      # POST the 6 appendix payloads
 make test      # full suite (e2e tests skip if DB is unreachable)
 ```
@@ -69,9 +66,8 @@ Exposed at `/metrics`, defined in [`app/metrics.py`](app/metrics.py).
 | `llm_calls_total` | counter | `provider`, `model`, `decision` | LLM call volume; decision ∈ {cache_hit, success, validation_retry, validation_failed, budget_exceeded}. |
 | `llm_tokens_total` / `llm_cost_estimate_usd_total` | counter | `provider`, `model`, `direction` | Spend, broken down by direction (in/out). |
 | `state_transition_total` | counter | `entity_type`, `outcome` | Transitions vs `stale_skipped` vs `disallowed_transition`. |
-| `outbox_dispatched_total` | counter | `kind`, `outcome` | Downstream delivery; outcome ∈ {sent, retried, dlq}. |
 
-Plus structured JSON logs with a `trace_id` propagated `receiver → queue → worker → state transition → outbox`, and `/healthz` (liveness) + `/readyz` (DB + Redis ping).
+Plus structured JSON logs with a `trace_id` propagated `receiver → queue → worker → state transition`, and `/healthz` (liveness) + `/readyz` (DB + Redis ping).
 
 ---
 
@@ -85,9 +81,7 @@ Plus structured JSON logs with a `trace_id` propagated `receiver → queue → w
 
 **Pluggable provider, offline default.** `LLMProvider` is a Protocol. `StubLLM` is a deterministic key-free implementation that uses the same fingerprints the deterministic adapters use plus broader keyword classification, so the system runs end-to-end with no API key. `OpenAILLM` wraps chat-completions with `response_format=json_schema` and reports real token cost. One env var swaps them.
 
-**State machine: idempotency + out-of-order, both at write time.** [`app/domain/state_machine.py`](app/domain/state_machine.py) inside one transaction: `SELECT ... FOR UPDATE` on the projection row, `INSERT INTO applied_events ON CONFLICT (entity_id, event_id) DO NOTHING RETURNING` (returns nothing on duplicate → `already_applied`), validate against `ALLOWED_TRANSITIONS`, compare `incoming.event_timestamp` vs current `state_timestamp` (older → `stale_event_log`, never walks backward), update projection, write outbox row, commit. The `applied_events` PK is the hard guarantee that no event moves state twice. Initial state is `None`, intentionally permissive (a backfilled vendor's first event might be `IN_TRANSIT`); the timestamp guard prevents a later-arriving older event from undoing it.
-
-**Transactional outbox + dispatcher.** State transitions write to `outbox` in the **same DB transaction** as the projection update, so we never have "decided X but didn't tell the world". A separate dispatcher pops rows with `FOR UPDATE SKIP LOCKED`, calls a downstream sink with `idempotency_key = event_id:kind`, retries with exponential backoff, DLQs after N attempts. End-to-end exactly-once if downstreams respect the idempotency key.
+**State machine: idempotency + out-of-order, both at write time.** [`app/domain/state_machine.py`](app/domain/state_machine.py) inside one transaction: `SELECT ... FOR UPDATE` on the projection row, `INSERT INTO applied_events ON CONFLICT (entity_id, event_id) DO NOTHING RETURNING` (returns nothing on duplicate → `already_applied`), validate against `ALLOWED_TRANSITIONS`, compare `incoming.event_timestamp` vs current `state_timestamp` (older → `stale_event_log`, never walks backward), update projection, commit. The `applied_events` PK is the hard guarantee that no event moves state twice. Initial state is `None`, intentionally permissive (a backfilled vendor's first event might be `IN_TRANSIT`); the timestamp guard prevents a later-arriving older event from undoing it.
 
 **Replay is the regression test.** [`app/tools/replay.py`](app/tools/replay.py) re-runs events from `raw_events` through the *normal* worker pipeline — no special replay code path. With `--truncate-projections`, the entire state is rebuilt from the log; the byte-identical-projection invariant is asserted in [`tests/test_replay.py`](tests/test_replay.py).
 
@@ -100,7 +94,7 @@ Conscious choices to fit the assessment window:
 - **Single `POST /webhooks` endpoint, vendor inferred in the worker.** Spec says "any arbitrary JSON", so vendor identity is derived from the payload by `AdapterRegistry`. A `POST /webhooks/{vendor_id}` route exists for vendor-scoped verification and routing.
 - **HMAC signature verification is a hook, not enforced.** `WEBHOOK_VENDOR_SECRETS` toggles HMAC verification on vendor-scoped routes; production still needs KMS-backed secrets, rotation, and per-vendor signature formats (Stripe-style, GitHub-style, etc.).
 - **arq on Redis instead of Kafka/SQS.** Keeps local dev to one `docker compose up`. Migration to Kafka/SQS is a small change in [`app/queue.py`](app/queue.py); the worker contract is "give me an event_id".
-- **Outbox dispatcher's downstream is a logging stub** behind the `DownstreamSink` interface. Production would inject a real HTTP/SQS/Kafka client behind the same interface.
+- **No transactional outbox** — out of scope for the assessment. In production, a single-TX outbox + dispatcher is the canonical way to emit downstream side-effects atomically with state changes; the architecture supports adding it without changing the state machine's TX shape.
 - **Daily budget guard via Postgres aggregation.** Correct across processes and good enough for the demo; production should use Redis token buckets or a dedicated quota service to avoid cross-process race conditions and DB pressure.
 - **One self-correcting retry on schema-invalid LLM output.** Not N with backoff — once is the SLA, then human review. The cost/latency profile is intentional; tune up if production data shows it's worth it.
 - **Four deterministic adapters.** A real fleet has dozens; the architecture supports adding them incrementally as vendors graduate from "rare" (LLM-handled) to "frequent" (adapter-handled), without changing the worker.
@@ -117,10 +111,10 @@ In rough priority order:
 1. **Per-vendor signature verification** on `POST /webhooks/{vendor_id}`, secrets in a KMS, rotated, with vendor-specific signature formats.
 2. **Schema registry** for canonical events; adapters declare `accepts: vendor_schema_v3, emits: canonical_v1` so old events replay correctly forever.
 3. **Multi-tenancy + RLS.** `org_id` on every business table, per-tenant LLM budgets and rate limits.
-4. **Real downstream sinks.** HTTP-with-retries, SQS, Kafka, internal services behind the existing `DownstreamSink` interface.
+4. **Real downstream sinks.** HTTP-with-retries, SQS, Kafka, or internal services with idempotent delivery contracts, fed by a future transactional outbox.
 5. **Cost & quality dashboards.** Daily LLM spend by vendor/classification/model, cache-hit rate, stale-event rate, `requires_human_review` rate, transition-reject rate.
 6. **Adapter promotion pipeline.** "Vendor X has been LLM-handled with stable JSON outputs for N days" → templated PR for a deterministic adapter.
 7. **Partitioned `raw_events`** by `received_at` weekly, archived to object storage after 90 days; replay transparently re-hydrates from cold storage.
 8. **Blue/green replay.** Replay into a parallel projection schema, diff vs production, swap atomically.
 9. **Real budget service.** Redis-backed token buckets with burst, replacing the Postgres aggregation.
-10. **DLQ inspector UI.** Human-in-the-loop tool for `requires_human_review` and outbox DLQ, with one-click replay.
+10. **DLQ inspector UI.** Human-in-the-loop tool for `requires_human_review`, with one-click replay.

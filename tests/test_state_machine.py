@@ -131,9 +131,7 @@ async def test_idempotent_replay_of_same_event(clean_db):
 
     async with pool.acquire() as conn:
         ae = await conn.fetchval("SELECT count(*) FROM applied_events WHERE event_id = $1", "ship-1")
-        ob = await conn.fetchval("SELECT count(*) FROM outbox WHERE event_id = $1", "ship-1")
     assert ae == 1
-    assert ob == 1
 
 
 @pytest.mark.asyncio

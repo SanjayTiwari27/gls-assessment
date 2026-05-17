@@ -4,7 +4,6 @@
 --   - raw_events is append-only and content-addressed (event_id = sha256 of payload).
 --   - applied_events makes worker re-execution a no-op per (entity, event).
 --   - shipments / invoices are PROJECTIONS over raw_events and are rebuildable.
---   - outbox decouples "we decided X" from "we told the world about X".
 
 BEGIN;
 
@@ -85,22 +84,6 @@ CREATE TABLE IF NOT EXISTS stale_event_log (
     detail         JSONB,
     observed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Transactional outbox for downstream side-effects. Composite PK guarantees
--- exactly-one delivery per (event_id, kind) end-to-end.
-CREATE TABLE IF NOT EXISTS outbox (
-    event_id        TEXT NOT NULL REFERENCES raw_events(event_id) ON DELETE RESTRICT,
-    kind            TEXT NOT NULL,
-    payload         JSONB NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'pending',   -- pending | sending | sent | dlq
-    attempts        INTEGER NOT NULL DEFAULT 0,
-    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_error      TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (event_id, kind)
-);
-CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox (status, next_attempt_at);
 
 -- LLM call cache. Keyed by (prompt_version, payload_hash, target_schema) so
 -- that re-deliveries of identical payloads do not double-bill the provider.

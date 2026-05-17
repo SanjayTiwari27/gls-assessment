@@ -124,7 +124,6 @@ async def clean_db(db_pool):
             TRUNCATE TABLE
                 requires_human_review,
                 canonical_events,
-                outbox,
                 stale_event_log,
                 applied_events,
                 shipments,

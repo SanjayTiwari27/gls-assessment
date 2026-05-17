@@ -40,12 +40,10 @@ async def _snapshot(pool) -> dict:
         applied = await conn.fetch(
             "SELECT entity_id, event_id, target_state FROM applied_events ORDER BY entity_id, event_id"
         )
-        outbox = await conn.fetch("SELECT event_id, kind FROM outbox ORDER BY event_id, kind")
     return {
         "shipments": [dict(r) for r in ships],
         "invoices": [dict(r) for r in invs],
         "applied": [dict(r) for r in applied],
-        "outbox": [dict(r) for r in outbox],
     }
 
 
@@ -114,6 +112,5 @@ async def test_full_replay_produces_byte_identical_projection(clean_db, fixture_
         ],
     )
 
-    assert _strip(before["outbox"], ["event_id", "kind"]) == _strip(after["outbox"], ["event_id", "kind"])
     # applied_events has entity_id which differs across truncate, but counts must match.
     assert len(before["applied"]) == len(after["applied"])

@@ -55,11 +55,6 @@ class Settings(BaseSettings):
     worker_max_retries: int = 5
     worker_retry_base_s: float = 1.0
 
-    # Outbox dispatcher
-    outbox_batch_size: int = 100
-    outbox_poll_interval_s: float = 0.5
-    outbox_max_attempts: int = 8
-
     # Versioning
     prompt_version: str = "v1"
     target_schema_version: str = "v1"

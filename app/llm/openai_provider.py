@@ -1,13 +1,21 @@
-"""OpenAI provider — Structured Outputs.
+"""OpenAI provider — JSON-object mode + orchestrator-side schema validation.
 
 Selected when ``LLM_PROVIDER=openai``. Uses the chat-completions API with
-``response_format={"type": "json_schema"}`` so the provider itself enforces
-schema conformance. We still re-validate the returned JSON in the orchestrator
-because providers occasionally drift.
+``response_format={"type": "json_object"}`` and embeds the target JSON schema
+into the system message so the model knows the exact shape to produce.
+
+We deliberately do NOT use ``response_format={"type": "json_schema", ...,
+"strict": true}`` because OpenAI's strict subset forbids ``additionalProperties:
+true``, and our schema needs freeform maps (``reference_ids``,
+``linked_references``) for vendor-id round-tripping. The orchestrator
+(``app.llm.fallback.LLMFallback``) re-validates every output with ``jsonschema``
+and runs one self-correcting retry on validation failure, which is the actual
+safety net regardless of provider mode.
 """
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -52,24 +60,19 @@ class OpenAILLM:
         schema: dict[str, Any],
         temperature: float = 0.0,
     ) -> LLMResult:
+        system_msg = (
+            "Return only a single JSON object. No prose, no markdown fences, no commentary. "
+            "The object MUST conform exactly to this JSON schema:\n"
+            + json.dumps(schema, separators=(",", ":"))
+        )
         body = {
             "model": self.model,
             "temperature": temperature,
             "messages": [
-                {
-                    "role": "system",
-                    "content": "Return only a JSON object that conforms to the provided schema. No prose.",
-                },
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt},
             ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "WebhookExtractionV1",
-                    "schema": schema,
-                    "strict": True,
-                },
-            },
+            "response_format": {"type": "json_object"},
         }
         started = time.perf_counter()
         resp = await self._client.post("/chat/completions", json=body)

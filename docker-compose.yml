@@ -72,20 +72,5 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: ["python", "-m", "arq", "app.workers.processor.WorkerSettings"]
 
-  dispatcher:
-    build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: postgresql://gls:gls@postgres:5432/gls
-      REDIS_URL: redis://redis:6379/0
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    command: ["python", "-m", "app.workers.outbox_dispatcher"]
-
 volumes:
   pgdata: {}

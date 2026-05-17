@@ -116,7 +116,7 @@ async def test_replay_produces_identical_projections(clean_db, fixture_payloads)
     async with pool.acquire() as conn:
         await conn.execute("""
             TRUNCATE TABLE
-                requires_human_review, canonical_events, outbox, stale_event_log,
+                requires_human_review, canonical_events, stale_event_log,
                 applied_events, shipments, invoices, entities
             CASCADE
         """)
@@ -153,9 +153,7 @@ async def test_duplicate_processing_is_noop(clean_db, fixture_payloads):
 
     async with pool.acquire() as conn:
         ae_count = await conn.fetchval("SELECT count(*) FROM applied_events")
-        ob_count = await conn.fetchval("SELECT count(*) FROM outbox")
     assert ae_count == 1
-    assert ob_count == 1
 
 
 @pytest.mark.asyncio
